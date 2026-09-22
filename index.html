@@ -1,132 +1,144 @@
 <!doctype html>
 
-<html lang="en">
+<html>
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#07110d">
-  <title>Blackjack Friends — Log in</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@700;800&display=swap" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Blackjack Friends</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div id="toast" class="toast"></div>
-  <main class="shell">
-<section class="auth-screen">
-  <div class="brand-lockup">
-    <div class="brand-chip">♠</div>
-    <div>
-      <div class="eyebrow">PRIVATE TABLE</div>
-      <h1>Blackjack Friends</h1>
-    </div>
+<main class="shell">
+  <section class="auth-screen">
+<div class="brand-lockup">
+  <div class="brand-chip">♠</div>
+  <div>
+    <div class="eyebrow">PRIVATE TABLE</div>
+    <h1>Blackjack Friends</h1>
   </div>
-  <div class="auth-card">
-    <div class="eyebrow">WELCOME BACK</div>
-    <h2>Log in</h2>
-    <form id="loginForm">
-      <label class="field">
-        <span>Email</span>
-        <input
-          id="email"
-          type="email"
-          autocomplete="email"
-          required
-          placeholder="you@example.com"
-        >
-      </label>
-      <label class="field">
-        <span>Password</span>
-        <input
-          id="password"
-          type="password"
-          autocomplete="current-password"
-          required
-          placeholder="Your password"
-        >
-      </label>
-      <button
-        class="primary wide"
-        type="submit"
-        id="loginButton"
-      >
-        Log in
-      </button>
-    </form>
-    <p class="muted small">
-      Don't have an account?
-      <a href="signup.html">Create one</a>
-    </p>
-    <p class="muted small">
-      Private access only. Ask the table owner to approve your email.
-    </p>
+</div>
+<div class="auth-card">
+  <h2>Log in</h2>
+  <form id="loginForm">
+    <label class="field">
+      <span>Email</span>
+      <input id="email" type="email" required>
+    </label>
+    <label class="field">
+      <span>Password</span>
+      <input id="password" type="password" required>
+    </label>
+    <button class="primary wide" type="submit" id="loginButton">
+      Log in
+    </button>
+  </form>
+  <div
+    id="result"
+    style="
+      margin-top:16px;
+      padding:12px;
+      border-radius:10px;
+      background:#18231e;
+      white-space:pre-wrap;
+      word-break:break-word;
+    "
+  >
+    Ready.
   </div>
-</section>
-  </main>
-  <!-- Supabase -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <!-- Your Supabase settings -->
-  <script src="config.js"></script>
-  <!-- Login code ONLY -->
-  <script>
-    const toast = document.getElementById("toast");
-    function showToast(message) {
-      if (!toast) return;
-      toast.textContent = message;
-      toast.classList.add("show");
-      clearTimeout(window.toastTimer);
-      window.toastTimer = setTimeout(() => {
-        toast.classList.remove("show");
-      }, 3000);
-    }
-    const config = window.APP_CONFIG || {};
-    if (!config.SUPABASE_URL || !config.SUPABASE_ANON_KEY) {
-      showToast("Supabase configuration is missing.");
-    }
-    const supabase = window.supabase.createClient(
-      config.SUPABASE_URL,
-      config.SUPABASE_ANON_KEY
+</div>
+  </section>
+</main>
+<script>
+  const result = document.getElementById("result");
+  function show(message) {
+    result.textContent = message;
+  }
+  window.onerror = function(message, source, line, column) {
+    show(
+      "JAVASCRIPT ERROR\n\n" +
+      message +
+      "\n\nLine: " +
+      line
     );
-    const loginForm = document.getElementById("loginForm");
-    const loginButton = document.getElementById("loginButton");
-    loginForm.addEventListener("submit", async (event) => {
-      // VERY IMPORTANT:
-      // Stop the browser from reloading the page.
-      event.preventDefault();
-      const email = document.getElementById("email").value.trim();
-      const password = document.getElementById("password").value;
-      if (!email || !password) {
-        showToast("Enter your email and password.");
-        return;
-      }
-      loginButton.disabled = true;
-      loginButton.textContent = "Logging in…";
-      const { data, error } =
-        await supabase.auth.signInWithPassword({
-          email: email,
-          password: password
-        });
-      if (error) {
-        console.error("LOGIN ERROR:", error);
-        showToast(error.message);
-        loginButton.disabled = false;
-        loginButton.textContent = "Log in";
-        return;
-      }
-      if (!data.session) {
-        showToast("Login succeeded, but no session was created.");
-        loginButton.disabled = false;
-        loginButton.textContent = "Log in";
-        return;
-      }
-      showToast("Login successful!");
-      // Give Supabase a moment to save the session,
-      // then open the actual Blackjack page.
-      setTimeout(() => {
-        window.location.href = "game.html";
-      }, 300);
-    });
-  </script>
+  };
+</script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  if (!window.supabase) {
+    show("ERROR: Supabase library did not load.");
+  } else {
+    show("Supabase library loaded.");
+  }
+</script>
+<script src="config.js"></script>
+<script>
+  if (!window.APP_CONFIG) {
+    show("ERROR: config.js did not load.");
+  } else {
+    show(
+      "config.js loaded.\n\n" +
+      "Supabase URL: " +
+      (window.APP_CONFIG.SUPABASE_URL ? "FOUND" : "MISSING") +
+      "\nAnon key: " +
+      (window.APP_CONFIG.SUPABASE_ANON_KEY ? "FOUND" : "MISSING")
+    );
+  }
+</script>
+<script>
+  try {
+    const cfg = window.APP_CONFIG;
+    const client = window.supabase.createClient(
+      cfg.SUPABASE_URL,
+      cfg.SUPABASE_ANON_KEY
+    );
+    show("Supabase client created.\n\nPress Log in.");
+    document
+      .getElementById("loginForm")
+      .addEventListener("submit", async function(event) {
+        event.preventDefault();
+        show("Login button received.\n\nConnecting to Supabase...");
+        const email =
+          document.getElementById("email").value.trim();
+        const password =
+          document.getElementById("password").value;
+        try {
+          const response =
+            await client.auth.signInWithPassword({
+              email,
+              password
+            });
+          if (response.error) {
+            show(
+              "SUPABASE LOGIN ERROR\n\n" +
+              response.error.message
+            );
+            return;
+          }
+          if (!response.data.session) {
+            show(
+              "Supabase accepted the request,\n" +
+              "but no session was returned."
+            );
+            return;
+          }
+          show(
+            "LOGIN WORKED!\n\n" +
+            "User: " +
+            response.data.user.email
+          );
+        } catch (error) {
+          show(
+            "LOGIN REQUEST CRASHED\n\n" +
+            error.message
+          );
+        }
+      });
+  } catch (error) {
+    show(
+      "PAGE INITIALIZATION ERROR\n\n" +
+      error.message
+    );
+  }
+</script>
 </body>
 </html>
