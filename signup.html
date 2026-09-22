@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>Create Account — Blackjack Friends</title>
+
+  <link rel="stylesheet" href="styles.css">
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+</head>
+
+<body>
+
+  <main class="auth-page">
+
+    <section class="auth-card">
+
+      <div class="eyebrow">BLACKJACK FRIENDS</div>
+
+      <h1>Create account</h1>
+
+      <p class="muted">
+        Create your account to join your friends' private tables.
+      </p>
+
+      <form id="signupForm">
+
+        <div id="signupError" class="auth-error hidden"></div>
+
+        <label for="displayName">
+          Display name
+        </label>
+
+        <input
+          id="displayName"
+          type="text"
+          placeholder="Your name"
+          autocomplete="name"
+          required
+        >
+
+        <label for="email">
+          Email
+        </label>
+
+        <input
+          id="email"
+          type="email"
+          placeholder="you@example.com"
+          autocomplete="email"
+          required
+        >
+
+        <label for="password">
+          Password
+        </label>
+
+        <input
+          id="password"
+          type="password"
+          placeholder="Choose a password"
+          autocomplete="new-password"
+          minlength="6"
+          required
+        >
+
+        <button
+          type="submit"
+          class="primary"
+          id="signupButton"
+        >
+          Create account
+        </button>
+
+      </form>
+
+      <div class="auth-switch">
+        <span>Already have an account?</span>
+        <a href="index.html">Log in</a>
+      </div>
+
+    </section>
+
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+
+    const supabaseClient = window.supabase.createClient(
+      window.APP_CONFIG.SUPABASE_URL,
+      window.APP_CONFIG.SUPABASE_ANON_KEY
+    );
+
+    const form = document.getElementById("signupForm");
+    const button = document.getElementById("signupButton");
+    const errorBox = document.getElementById("signupError");
+
+    function showError(message) {
+      errorBox.textContent = message;
+      errorBox.classList.remove("hidden");
+    }
+
+    form.addEventListener("submit", async function(event) {
+
+      event.preventDefault();
+
+      errorBox.classList.add("hidden");
+
+      const displayName =
+        document.getElementById("displayName").value.trim();
+
+      const email =
+        document.getElementById("email").value.trim();
+
+      const password =
+        document.getElementById("password").value;
+
+      if (!displayName || !email || !password) {
+        showError("Please fill in all fields.");
+        return;
+      }
+
+      button.disabled = true;
+      button.textContent = "Creating account...";
+
+      const { data, error } =
+        await supabaseClient.auth.signUp({
+          email: email,
+          password: password,
+          options: {
+            data: {
+              display_name: displayName
+            }
+          }
+        });
+
+      if (error) {
+
+        showError(error.message);
+
+        button.disabled = false;
+        button.textContent = "Create account";
+
+        return;
+      }
+
+      if (data.session) {
+
+        window.location.href = "index.html";
+
+      } else {
+
+        button.textContent = "Account created";
+
+        showError(
+          "Your account was created. Check your email if email confirmation is enabled, then return to the login page."
+        );
+
+        setTimeout(() => {
+          window.location.href = "index.html";
+        }, 3000);
+
+      }
+
+    });
+
+  </script>
+
+</body>
+</html>
