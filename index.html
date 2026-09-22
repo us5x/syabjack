@@ -19,30 +19,18 @@
   <main class="shell">
 <section class="auth-screen">
   <div class="brand-lockup">
-    <div class="brand-chip">
-      ♠
-    </div>
+    <div class="brand-chip">♠</div>
     <div>
-      <div class="eyebrow">
-        PRIVATE TABLE
-      </div>
-      <h1>
-        Blackjack Friends
-      </h1>
+      <div class="eyebrow">PRIVATE TABLE</div>
+      <h1>Blackjack Friends</h1>
     </div>
   </div>
   <div class="auth-card">
-    <div class="eyebrow">
-      WELCOME BACK
-    </div>
-    <h2>
-      Log in
-    </h2>
+    <div class="eyebrow">PRIVATE TABLE</div>
+    <h2>Log in</h2>
     <form id="loginForm">
       <label class="field">
-        <span>
-          Email
-        </span>
+        <span>Email</span>
         <input
           id="email"
           type="email"
@@ -52,9 +40,7 @@
         >
       </label>
       <label class="field">
-        <span>
-          Password
-        </span>
+        <span>Password</span>
         <input
           id="password"
           type="password"
@@ -64,18 +50,16 @@
         >
       </label>
       <button
+        id="loginButton"
         class="primary wide"
         type="submit"
-        id="loginButton"
       >
         Log in
       </button>
     </form>
     <p class="muted small">
       Don't have an account?
-      <a href="signup.html">
-        Create one
-      </a>
+      <a href="signup.html">Create one</a>
     </p>
     <p class="muted small">
       Private access only. Ask the table owner to approve your email.
@@ -83,160 +67,93 @@
   </div>
 </section>
   </main>
-  <!-- Supabase -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <!-- Your Supabase configuration -->
   <script src="config.js"></script>
   <script>
-    const toast = document.getElementById("toast");
-    function showToast(message){
-      if(!toast) return;
-      toast.textContent = message;
-      toast.classList.add("show");
-      clearTimeout(window.loginToastTimer);
-      window.loginToastTimer = setTimeout(() => {
-        toast.classList.remove("show");
-      }, 4000);
-    }
-    /*
-      Check that Supabase loaded.
-    */
-    if(!window.supabase){
-      showToast(
-        "Supabase could not load. Check your internet connection."
-      );
-      throw new Error("Supabase library did not load.");
-    }
-    /*
-      Check that config.js loaded.
-    */
-    if(
-      !window.APP_CONFIG ||
-      !window.APP_CONFIG.SUPABASE_URL ||
-      !window.APP_CONFIG.SUPABASE_ANON_KEY
-    ){
-      showToast(
-        "Supabase configuration is missing."
-      );
-      throw new Error(
-        "APP_CONFIG is missing or incomplete."
-      );
-    }
-    /*
-      Create Supabase client.
-    */
-    const supabase = window.supabase.createClient(
+    const client = window.supabase.createClient(
       window.APP_CONFIG.SUPABASE_URL,
       window.APP_CONFIG.SUPABASE_ANON_KEY
     );
-    const loginForm =
+    const form =
       document.getElementById("loginForm");
-    const loginButton =
+    const button =
       document.getElementById("loginButton");
+    const toast =
+      document.getElementById("toast");
+    function showMessage(message){
+      toast.textContent = message;
+      toast.classList.add("show");
+      clearTimeout(window.toastTimer);
+      window.toastTimer = setTimeout(() => {
+        toast.classList.remove("show");
+      }, 3500);
+    }
+    /*
+      If Supabase already has a saved session,
+      go straight to the game.
+    */
+    async function checkLogin(){
+      const { data, error } =
+        await client.auth.getSession();
+      if(error){
+        console.error(error);
+        return;
+      }
+      if(data.session){
+        window.location.replace("game.html");
+      }
+    }
     /*
       LOGIN
     */
-    loginForm.addEventListener(
-      "submit",
-      async function(event){
-        event.preventDefault();
-        const email =
-          document
-            .getElementById("email")
-            .value
-            .trim();
-        const password =
-          document
-            .getElementById("password")
-            .value;
-        if(!email || !password){
-          showToast(
-            "Enter your email and password."
-          );
-          return;
-        }
-        loginButton.disabled = true;
-        loginButton.textContent =
-          "Logging in…";
-        try{
-          const {
-            data,
-            error
-          } = await supabase.auth.signInWithPassword({
-            email: email,
-            password: password
-          });
-          if(error){
-            console.error(
-              "Supabase login error:",
-              error
-            );
-            showToast(
-              error.message
-            );
-            loginButton.disabled = false;
-            loginButton.textContent =
-              "Log in";
-            return;
-          }
-          if(!data || !data.session){
-            showToast(
-              "Login succeeded, but no session was created."
-            );
-            loginButton.disabled = false;
-            loginButton.textContent =
-              "Log in";
-            return;
-          }
-          /*
-            LOGIN SUCCESSFUL.
-            Now go to the actual Blackjack page.
-          */
-          showToast(
-            "Login successful!"
-          );
-          setTimeout(() => {
-            window.location.href =
-              "game.html";
-          }, 300);
-        }
-        catch(error){
-          console.error(
-            "Login exception:",
-            error
-          );
-          showToast(
-            error.message ||
-            "Something went wrong while logging in."
-          );
-          loginButton.disabled = false;
-          loginButton.textContent =
-            "Log in";
-        }
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const email =
+        document.getElementById("email").value.trim();
+      const password =
+        document.getElementById("password").value;
+      if(!email || !password){
+        showMessage(
+          "Enter your email and password."
+        );
+        return;
       }
-    );
-    /*
-      If the user is already logged in,
-      don't make them log in again.
-    */
-    async function checkExistingSession(){
-      try{
-        const {
-          data
-        } = await supabase.auth.getSession();
-        if(data && data.session){
-          window.location.href =
-            "game.html";
-        }
-      }
-      catch(error){
+      button.disabled = true;
+      button.textContent = "Logging in…";
+      const { data, error } =
+        await client.auth.signInWithPassword({
+          email,
+          password
+        });
+      if(error){
         console.error(
-          "Session check error:",
+          "LOGIN ERROR:",
           error
         );
+        showMessage(error.message);
+        button.disabled = false;
+        button.textContent = "Log in";
+        return;
       }
-    }
-    checkExistingSession();
+      if(!data.session){
+        showMessage(
+          "Login succeeded, but no session was returned."
+        );
+        button.disabled = false;
+        button.textContent = "Log in";
+        return;
+      }
+      /*
+        Supabase automatically persists this session
+        in the browser.
+        We do NOT store the password.
+      */
+      showMessage("Login successful!");
+      window.setTimeout(() => {
+        window.location.replace("game.html");
+      }, 200);
+    });
+    checkLogin();
   </script>
 </body>
 </html>
