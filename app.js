@@ -1,94 +1,67 @@
 const { createClient } = window.supabase;
-
 const cfg = window.APP_CONFIG || {};
-
-const supabase = createClient(
-  cfg.SUPABASE_URL,
-  cfg.SUPABASE_ANON_KEY
-);
+const supabase = createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 
 let user = null;
 let profile = null;
+
 let currentLobby = null;
 let lobbyPlayers = [];
 let lobbyChannel = null;
+
 let game = null;
 let myBet = 0;
 
 const suits = ["♠", "♥", "♦", "♣"];
-const ranks = [
-  "A", "2", "3", "4", "5", "6", "7",
-  "8", "9", "10", "J", "Q", "K"
-];
+const ranks = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
 
 
 /* =========================================================
    BASIC HELPERS
 ========================================================= */
 
-function toast(message) {
+function toast(msg) {
   const el = $("#toast");
+  if (!el) return;
 
-  if (!el) {
-    alert(message);
-    return;
-  }
-
-  el.textContent = message;
+  el.textContent = msg;
   el.classList.add("show");
 
-  clearTimeout(toast.timer);
-
-  toast.timer = setTimeout(() => {
+  clearTimeout(toast.t);
+  toast.t = setTimeout(() => {
     el.classList.remove("show");
-  }, 2400);
+  }, 2600);
 }
 
-
-function esc(value) {
-  return String(value ?? "").replace(
+function esc(s) {
+  return String(s).replace(
     /[&<>"']/g,
-    (char) => ({
+    c => ({
       "&": "&amp;",
       "<": "&lt;",
       ">": "&gt;",
       '"': "&quot;",
       "'": "&#039;"
-    }[char])
+    }[c])
   );
 }
-
 
 function shuffle(array) {
   for (let i = array.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-
-    [array[i], array[j]] =
-      [array[j], array[i]];
+    [array[i], array[j]] = [array[j], array[i]];
   }
 
   return array;
 }
 
-
-function currentGame() {
-  return JSON.parse(
-    JSON.stringify(game || {})
-  );
-}
-
-
-/* =========================================================
-   CARDS
-========================================================= */
-
 function makeShoe(decks = 6) {
   const shoe = [];
 
-  for (let deck = 0; deck < decks; deck++) {
+  for (let d = 0; d < decks; d++) {
     for (const suit of suits) {
       for (const rank of ranks) {
         shoe.push({
@@ -103,21 +76,20 @@ function makeShoe(decks = 6) {
 }
 
 
+/* =========================================================
+   BLACKJACK RULES
+========================================================= */
+
 function handValue(cards = []) {
   let total = 0;
   let aces = 0;
 
   for (const card of cards) {
-
     if (card.rank === "A") {
-      aces++;
       total += 11;
-
-    } else if (
-      ["K", "Q", "J"].includes(card.rank)
-    ) {
+      aces++;
+    } else if (["K", "Q", "J"].includes(card.rank)) {
       total += 10;
-
     } else {
       total += Number(card.rank);
     }
@@ -134,85 +106,43 @@ function handValue(cards = []) {
   };
 }
 
-
-function isBlackjack(cards) {
-  return (
-    cards.length === 2 &&
-    handValue(cards).total === 21
-  );
+function isBlackjack(cards = []) {
+  return cards.length === 2 && handValue(cards).total === 21;
 }
 
-
-function cardHtml(card, back = false) {
-
-  if (back) {
-    return `<div class="card back">?</div>`;
-  }
-
-  const red =
-    card.suit === "♥" ||
-    card.suit === "♦";
-
-  return `
-    <div class="card ${red ? "red" : ""}">
-      <span>${esc(card.rank)}</span>
-      <span class="suit">${esc(card.suit)}</span>
-      <span>${esc(card.rank)}</span>
-    </div>
-  `;
+function isBust(cards = []) {
+  return handValue(cards).total > 21;
 }
 
 
 /* =========================================================
-   AUTH / SESSION
+   PROFILE / ACCOUNT
 ========================================================= */
 
 async function getProfile() {
-
-  if (!user) {
-    return false;
-  }
-
-  const {
-    data,
-    error
-  } = await supabase
+  const { data, error } = await supabase
     .from("profiles")
     .select("*")
     .eq("id", user.id)
     .single();
 
   if (error) {
-    console.error("Profile error:", error);
-
-    toast(
-      "Logged in, but your player profile could not be loaded: " +
-      error.message
-    );
-
+    toast(error.message);
     return false;
   }
 
   profile = data;
-
   renderBalance();
 
   return true;
 }
 
-
 function renderBalance() {
-
-  if ($("#topBalance")) {
-    $("#topBalance").textContent =
-      Number(profile?.balance || 0)
-        .toLocaleString();
-  }
+  const profileBalance = Number(profile?.balance || 0);
 
   if ($("#profileBalance")) {
     $("#profileBalance").textContent =
-      Number(profile?.balance || 0)
-        .toLocaleString();
+      profileBalance.toLocaleString();
   }
 
   if ($("#profileName")) {
@@ -222,740 +152,156 @@ function renderBalance() {
 
   if ($("#profileEmail")) {
     $("#profileEmail").textContent =
-      profile?.email || user?.email || "";
+      profile?.email || "";
   }
-}
-
-
-async function startApplication() {
-
-  const isGamePage =
-    location.pathname
-      .split("/")
-      .pop()
-      .toLowerCase() === "game.html";
-
 
   /*
-    Get the saved Supabase session.
-
-    Supabase automatically stores the session
-    in browser storage. We never store the password.
+    Outside a lobby, show the account balance.
+    Inside a lobby, show the table bankroll.
   */
-
-  const {
-    data,
-    error
-  } = await supabase.auth.getSession();
-
-
-  if (error) {
-
-    console.error(
-      "Session error:",
-      error
-    );
-
-    if (isGamePage) {
-      location.replace("index.html");
+  if ($("#topBalance")) {
+    if (currentLobby && game) {
+      $("#topBalance").textContent =
+        tableBankroll(user.id).toLocaleString();
+    } else {
+      $("#topBalance").textContent =
+        profileBalance.toLocaleString();
     }
-
-    return;
   }
-
-
-  /*
-    NOT LOGGED IN
-  */
-
-  if (!data.session) {
-
-    if (isGamePage) {
-      location.replace("index.html");
-    }
-
-    return;
-  }
-
-
-  /*
-    LOGGED IN
-  */
-
-  user = data.session.user;
-
-
-  /*
-    If someone is already logged in and
-    visits index.html, send them directly
-    to the game.
-  */
-
-  if (!isGamePage) {
-
-    location.replace("game.html");
-
-    return;
-  }
-
-
-  /*
-    We are on game.html and have a session.
-  */
-
-  const profileLoaded =
-    await getProfile();
-
-  if (!profileLoaded) {
-    return;
-  }
-
-
-  initializeGamePage();
-
-
-  await loadLobbies();
-
-
-  /*
-    Keep login/logout state synchronized.
-  */
-
-  supabase.auth.onAuthStateChange(
-    (event, session) => {
-
-      if (!session) {
-
-        user = null;
-        profile = null;
-
-        location.replace("index.html");
-
-        return;
-      }
-
-      user = session.user;
-
-    }
-  );
 }
 
 
 /* =========================================================
-   GAME PAGE INITIALIZATION
+   TABLE BANKROLL
 ========================================================= */
 
-function initializeGamePage() {
+function startingChips() {
+  return Number(currentLobby?.starting_chips || 5000);
+}
 
-  console.log("Blackjack Friends game initialized.");
+function tableBankroll(id) {
+  if (!currentLobby) return 0;
 
-  /*
-    HOME
-  */
-
-  const createLobbyBtn =
-    $("#createLobbyBtn");
-
-  if (createLobbyBtn) {
-    createLobbyBtn.addEventListener(
-      "click",
-      () => {
-
-        const modal =
-          $("#createModal");
-
-        if (modal) {
-          modal.classList.remove("hidden");
-        }
-
-      }
-    );
+  if (!game) {
+    return id === user?.id ? startingChips() : 0;
   }
 
-
-  /*
-    CREATE LOBBY
-  */
-
-  const confirmCreateLobby =
-    $("#confirmCreateLobby");
-
-  if (confirmCreateLobby) {
-
-    confirmCreateLobby.addEventListener(
-      "click",
-      createLobby
-    );
-
+  if (!game.bankrolls) {
+    return id === user?.id ? startingChips() : 0;
   }
 
+  const value = Number(game.bankrolls[id]);
 
-  /*
-    BACK HOME
-  */
-
-  const backHomeBtn =
-    $("#backHomeBtn");
-
-  if (backHomeBtn) {
-
-    backHomeBtn.addEventListener(
-      "click",
-      async () => {
-
-        if (lobbyChannel) {
-          await supabase.removeChannel(
-            lobbyChannel
-          );
-
-          lobbyChannel = null;
-        }
-
-        currentLobby = null;
-        lobbyPlayers = [];
-        game = null;
-        myBet = 0;
-
-        show("home");
-
-        await loadLobbies();
-
-      }
-    );
-
+  if (!Number.isFinite(value)) {
+    return id === user?.id ? startingChips() : 0;
   }
 
+  return value;
+}
 
-  /*
-    PROFILE
-  */
+function ensureBankrolls(sourceGame) {
+  const g = sourceGame;
 
-  const profileBtn =
-    $("#profileBtn");
-
-  if (profileBtn) {
-
-    profileBtn.addEventListener(
-      "click",
-      () => {
-
-        $("#profileModal")
-          ?.classList.remove("hidden");
-
-      }
-    );
-
+  if (!g.bankrolls) {
+    g.bankrolls = {};
   }
 
-
-  /*
-    MODAL CLOSE BUTTONS
-  */
-
-  $$("[data-close]").forEach(
-    (button) => {
-
-      button.addEventListener(
-        "click",
-        () => {
-
-          const target =
-            $("#" + button.dataset.close);
-
-          target?.classList.add("hidden");
-
-        }
-      );
-
+  for (const player of lobbyPlayers) {
+    if (!Number.isFinite(Number(g.bankrolls[player.user_id]))) {
+      g.bankrolls[player.user_id] = startingChips();
     }
-  );
-
-
-  /*
-    LOGOUT
-  */
-
-  const logoutBtn =
-    $("#logoutBtn");
-
-  if (logoutBtn) {
-
-    logoutBtn.addEventListener(
-      "click",
-      async () => {
-
-        logoutBtn.disabled = true;
-        logoutBtn.textContent = "Logging out…";
-
-        await supabase.auth.signOut();
-
-        location.replace("index.html");
-
-      }
-    );
-
   }
 
-
-  /*
-    COPY INVITE CODE
-  */
-
-  const copyCodeBtn =
-    $("#copyCodeBtn");
-
-  if (copyCodeBtn) {
-
-    copyCodeBtn.addEventListener(
-      "click",
-      async () => {
-
-        if (!currentLobby) {
-          return;
-        }
-
-        const code =
-          currentLobby.invite_code;
-
-        try {
-
-          await navigator.clipboard.writeText(
-            code
-          );
-
-          toast("Invite code copied.");
-
-        } catch {
-
-          toast(
-            "Invite code: " + code
-          );
-
-        }
-
-      }
-    );
-
-  }
-
-
-  /*
-    BET BUTTONS
-  */
-
-  $$(".chip-btn").forEach(
-    (button) => {
-
-      button.addEventListener(
-        "click",
-        () => {
-
-          setBet(
-            Number(button.dataset.bet)
-          );
-
-        }
-      );
-
-    }
-  );
-
-
-  /*
-    CUSTOM BET
-  */
-
-  const setBetBtn =
-    $("#setBetBtn");
-
-  if (setBetBtn) {
-
-    setBetBtn.addEventListener(
-      "click",
-      () => {
-
-        setBet(
-          Number(
-            $("#customBet")?.value
-          )
-        );
-
-      }
-    );
-
-  }
-
-
-  /*
-    DEAL ROUND
-  */
-
-  const startRoundBtn =
-    $("#startRoundBtn");
-
-  if (startRoundBtn) {
-
-    startRoundBtn.addEventListener(
-      "click",
-      async () => {
-
-        if (game?.phase === "finished") {
-          await resetRound();
-        } else {
-          await startRound();
-        }
-
-      }
-    );
-
-  }
-
-
-  /*
-    HIT
-  */
-
-  const hitBtn =
-    $("#hitBtn");
-
-  if (hitBtn) {
-
-    hitBtn.addEventListener(
-      "click",
-      () => playerAction("hit")
-    );
-
-  }
-
-
-  /*
-    STAND
-  */
-
-  const standBtn =
-    $("#standBtn");
-
-  if (standBtn) {
-
-    standBtn.addEventListener(
-      "click",
-      () => playerAction("stand")
-    );
-
-  }
-
-
-  /*
-    DOUBLE
-  */
-
-  const doubleBtn =
-    $("#doubleBtn");
-
-  if (doubleBtn) {
-
-    doubleBtn.addEventListener(
-      "click",
-      () => playerAction("double")
-    );
-
-  }
-
-
-  /*
-    DEALER
-  */
-
-  const dealerActionBtn =
-    $("#dealerActionBtn");
-
-  if (dealerActionBtn) {
-
-    dealerActionBtn.addEventListener(
-      "click",
-      runDealer
-    );
-
-  }
-
-
-  /*
-    DEALER BANK
-  */
-
-  const dealerGiveBtn =
-    $("#dealerGiveBtn");
-
-  if (dealerGiveBtn) {
-
-    dealerGiveBtn.addEventListener(
-      "click",
-      () => dealerAdjust("give")
-    );
-
-  }
-
-
-  const dealerTakeBtn =
-    $("#dealerTakeBtn");
-
-  if (dealerTakeBtn) {
-
-    dealerTakeBtn.addEventListener(
-      "click",
-      () => dealerAdjust("take")
-    );
-
-  }
-
-
-  /*
-    LEAVE TABLE
-  */
-
-  const leaveLobbyBtn =
-    $("#leaveLobbyBtn");
-
-  if (leaveLobbyBtn) {
-
-    leaveLobbyBtn.addEventListener(
-      "click",
-      leaveLobby
-    );
-
-  }
-
-
-  /*
-    CHAT
-  */
-
-  const chatForm =
-    $("#chatForm");
-
-  if (chatForm) {
-
-    chatForm.addEventListener(
-      "submit",
-      async (event) => {
-
-        event.preventDefault();
-
-        const input =
-          $("#chatInput");
-
-        const message =
-          input?.value.trim();
-
-        if (!message || !currentLobby) {
-          return;
-        }
-
-        const { error } =
-          await supabase
-            .from("chat_messages")
-            .insert({
-              lobby_id: currentLobby.id,
-              user_id: user.id,
-              display_name:
-                profile?.display_name ||
-                "Player",
-              message
-            });
-
-        if (error) {
-
-          toast(error.message);
-
-          return;
-
-        }
-
-        input.value = "";
-
-        await loadChat();
-
-      }
-    );
-
-  }
-
+  return g;
 }
 
 
 /* =========================================================
-   HOME / LOBBIES
+   VIEWS
 ========================================================= */
 
 function show(view) {
+  const home = $("#homeView");
+  const lobby = $("#lobbyView");
 
-  if ($("#homeView")) {
-    $("#homeView")
-      .classList.toggle(
-        "hidden",
-        view !== "home"
-      );
-  }
+  if (!home || !lobby) return;
 
-  if ($("#lobbyView")) {
-    $("#lobbyView")
-      .classList.toggle(
-        "hidden",
-        view !== "lobby"
-      );
-  }
+  home.classList.toggle("hidden", view !== "home");
+  lobby.classList.toggle("hidden", view !== "lobby");
 }
 
 
-async function loadLobbies() {
+/* =========================================================
+   LOBBIES
+========================================================= */
 
-  const {
-    data,
-    error
-  } = await supabase
-    .from("lobbies")
-    .select("*")
-    .order("created_at", {
-      ascending: false
-    });
+function renderLobbies(rows) {
+  const list = $("#lobbyList");
+  const empty = $("#emptyLobbies");
 
+  if (!list || !empty) return;
 
-  if (error) {
-
-    console.error(
-      "Lobby loading error:",
-      error
-    );
-
-    toast(error.message);
-
+  if (!rows.length) {
+    list.innerHTML = "";
+    empty.classList.remove("hidden");
     return;
   }
 
+  empty.classList.add("hidden");
+
+  list.innerHTML = rows.map(lobby => `
+    <div class="lobby-card">
+      <div class="eyebrow">OPEN TABLE</div>
+
+      <h4>${esc(lobby.name)}</h4>
+
+      <div class="lobby-meta">
+        <span>♟ Private</span>
+        <span>🪙 ${Number(lobby.starting_chips || 0).toLocaleString()}</span>
+        <span>${esc(lobby.status || "waiting")}</span>
+      </div>
+
+      <button
+        type="button"
+        class="secondary join-btn"
+        data-id="${lobby.id}"
+      >
+        Join table
+      </button>
+    </div>
+  `).join("");
+
+  $$(".join-btn").forEach(button => {
+    button.onclick = () => joinLobby(button.dataset.id);
+  });
+}
+
+async function loadLobbies() {
+  const { data, error } = await supabase
+    .from("lobbies")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    toast(error.message);
+    return;
+  }
 
   renderLobbies(data || []);
 }
 
-
-function renderLobbies(rows) {
-
-  const list =
-    $("#lobbyList");
-
-  const empty =
-    $("#emptyLobbies");
-
-
-  if (!list || !empty) {
-    return;
-  }
-
-
-  if (!rows.length) {
-
-    list.innerHTML = "";
-
-    empty.classList.remove(
-      "hidden"
-    );
-
-    return;
-  }
-
-
-  empty.classList.add(
-    "hidden"
-  );
-
-
-  list.innerHTML =
-    rows.map((lobby) => `
-
-      <div class="lobby-card">
-
-        <div class="eyebrow">
-          PRIVATE TABLE
-        </div>
-
-        <h4>
-          ${esc(lobby.name)}
-        </h4>
-
-        <div class="lobby-meta">
-
-          <span>
-            ♟ Private
-          </span>
-
-          <span>
-            🪙 ${Number(
-              lobby.starting_chips || 0
-            ).toLocaleString()}
-          </span>
-
-          <span>
-            ${esc(lobby.status || "waiting")}
-          </span>
-
-        </div>
-
-        <button
-          type="button"
-          class="secondary join-btn"
-          data-id="${esc(lobby.id)}"
-        >
-          Join table
-        </button>
-
-      </div>
-
-    `).join("");
-
-
-  $$(".join-btn").forEach(
-    (button) => {
-
-      button.addEventListener(
-        "click",
-        () => {
-
-          joinLobby(
-            button.dataset.id
-          );
-
-        }
-      );
-
-    }
-  );
-
-}
-
-
-/* =========================================================
-   CREATE / JOIN LOBBY
-========================================================= */
-
 async function createLobby() {
-
-  if (!user) {
-    toast("You are not logged in.");
-    return;
-  }
-
-
   const name =
-    $("#newLobbyName")
-      ?.value.trim() ||
+    $("#newLobbyName")?.value.trim() ||
     "Friends Table";
 
-
   const starting =
-    Number(
-      $("#newStartingChips")
-        ?.value
-    ) || 5000;
+    Number($("#newStartingChips")?.value) || 5000;
 
+  if (starting <= 0) {
+    toast("Starting chips must be greater than 0.");
+    return;
+  }
 
   const code =
     Math.random()
@@ -963,37 +309,40 @@ async function createLobby() {
       .slice(2, 8)
       .toUpperCase();
 
+  const initialGame = {
+    phase: "waiting",
+    shoe: [],
+    dealer: [],
+    hands: {},
+    bets: {},
+    bankrolls: {
+      [user.id]: starting
+    },
+    done: {},
+    results: {},
+    ledger: {},
+    turn_user_id: null,
+    message: ""
+  };
 
-  const {
-    data,
-    error
-  } = await supabase
+  const { data, error } = await supabase
     .from("lobbies")
     .insert({
       name,
       invite_code: code,
       host_id: user.id,
       starting_chips: starting,
-      game: {
-        phase: "waiting",
-        ledger: {}
-      }
+      game: initialGame
     })
     .select()
     .single();
 
-
   if (error) {
-
     toast(error.message);
-
     return;
   }
 
-
-  const {
-    error: playerError
-  } = await supabase
+  const { error: playerError } = await supabase
     .from("lobby_players")
     .insert({
       lobby_id: data.id,
@@ -1001,85 +350,47 @@ async function createLobby() {
       seat: 1
     });
 
-
   if (playerError) {
-
     toast(playerError.message);
-
     return;
   }
 
-
-  $("#createModal")
-    ?.classList.add("hidden");
-
+  if ($("#createModal")) {
+    $("#createModal").classList.add("hidden");
+  }
 
   await joinLobby(data.id);
 }
 
-
 async function joinLobby(id) {
-
-  const {
-    data: lobby,
-    error
-  } = await supabase
+  const { data: lobby, error } = await supabase
     .from("lobbies")
     .select("*")
     .eq("id", id)
     .single();
 
-
   if (error) {
-
     toast(error.message);
-
     return;
   }
-
 
   const {
     data: players,
-    error: playerError
+    error: playersError
   } = await supabase
     .from("lobby_players")
-    .select(
-      "*, profiles(display_name,balance,email)"
-    )
+    .select("*, profiles(display_name,balance,email)")
     .eq("lobby_id", id)
     .order("seat");
 
-
-  if (playerError) {
-
-    toast(playerError.message);
-
+  if (playersError) {
+    toast(playersError.message);
     return;
   }
 
-
-  const playerList =
-    players || [];
-
-
-  /*
-    Add ourselves if we're not
-    already sitting at the table.
-  */
-
-  if (
-    !playerList.some(
-      p => p.user_id === user.id
-    )
-  ) {
-
+  if (!players.some(p => p.user_id === user.id)) {
     const usedSeats =
-      new Set(
-        playerList.map(
-          p => p.seat
-        )
-      );
-
+      new Set(players.map(p => p.seat));
 
     let seat = 1;
 
@@ -1087,20 +398,12 @@ async function joinLobby(id) {
       seat++;
     }
 
-
     if (seat > 7) {
-
-      toast(
-        "This table is full."
-      );
-
+      toast("This table is full.");
       return;
     }
 
-
-    const {
-      error: joinError
-    } = await supabase
+    const { error: joinError } = await supabase
       .from("lobby_players")
       .insert({
         lobby_id: id,
@@ -1108,179 +411,154 @@ async function joinLobby(id) {
         seat
       });
 
-
     if (joinError) {
-
       toast(joinError.message);
-
       return;
     }
-
   }
-
 
   currentLobby = lobby;
 
-  game =
-    lobby.game || {
-      phase: "waiting",
-      ledger: {}
-    };
+  game = lobby.game || {
+    phase: "waiting",
+    shoe: [],
+    dealer: [],
+    hands: {},
+    bets: {},
+    bankrolls: {},
+    done: {},
+    results: {},
+    ledger: {},
+    turn_user_id: null,
+    message: ""
+  };
 
+  /*
+    Make sure everyone who joins has table chips.
+  */
+  if (!game.bankrolls) {
+    game.bankrolls = {};
+  }
+
+  if (!Number.isFinite(Number(game.bankrolls[user.id]))) {
+    game.bankrolls[user.id] = startingChips();
+
+    await supabase
+      .from("lobbies")
+      .update({ game })
+      .eq("id", currentLobby.id);
+  }
 
   await refreshLobby();
 
   subscribeLobby();
 
   show("lobby");
+
+  renderBalance();
 }
 
 
 /* =========================================================
-   REFRESH LOBBY
+   LOBBY REFRESH / REALTIME
 ========================================================= */
 
 async function refreshLobby() {
-
-  if (!currentLobby) {
-    return;
-  }
-
+  if (!currentLobby) return;
 
   const {
     data: lobby,
-    error
+    error: lobbyError
   } = await supabase
     .from("lobbies")
     .select("*")
     .eq("id", currentLobby.id)
     .single();
 
-
-  if (error) {
-
-    console.error(
-      "Refresh lobby error:",
-      error
-    );
-
+  if (lobbyError) {
+    toast(lobbyError.message);
     return;
   }
 
-
-  currentLobby = lobby;
-
-
-  game =
-    lobby.game || {
+  if (lobby) {
+    currentLobby = lobby;
+    game = lobby.game || {
       phase: "waiting",
-      ledger: {}
+      shoe: [],
+      dealer: [],
+      hands: {},
+      bets: {},
+      bankrolls: {},
+      done: {},
+      results: {},
+      ledger: {},
+      turn_user_id: null,
+      message: ""
     };
-
+  }
 
   const {
     data: players,
-    error: playerError
+    error: playersError
   } = await supabase
     .from("lobby_players")
-    .select(
-      "*, profiles(display_name,balance,email)"
-    )
+    .select("*, profiles(display_name,balance,email)")
     .eq("lobby_id", currentLobby.id)
     .order("seat");
 
-
-  if (playerError) {
-
-    toast(playerError.message);
-
+  if (playersError) {
+    toast(playersError.message);
     return;
   }
 
-
-  lobbyPlayers =
-    players || [];
-
+  lobbyPlayers = players || [];
 
   if ($("#lobbyTitle")) {
     $("#lobbyTitle").textContent =
       currentLobby.name;
   }
 
-
   if ($("#copyCodeBtn")) {
     $("#copyCodeBtn").textContent =
       currentLobby.invite_code;
   }
-
 
   if ($("#playerCount")) {
     $("#playerCount").textContent =
       `${lobbyPlayers.length} / 7`;
   }
 
-
-  const host =
-    lobbyPlayers.find(
-      p =>
-        p.user_id ===
-        currentLobby.host_id
-    );
-
+  const host = lobbyPlayers.find(
+    p => p.user_id === currentLobby.host_id
+  );
 
   if ($("#hostLabel")) {
     $("#hostLabel").textContent =
-      `Host: ${
-        host?.profiles?.display_name ||
-        "—"
-      }`;
+      `Host: ${host?.profiles?.display_name || "—"}`;
   }
 
-
   myBet =
-    Number(
-      game?.bets?.[user.id] || 0
-    );
-
+    Number(game?.bets?.[user.id] || 0);
 
   if ($("#currentBet")) {
     $("#currentBet").textContent =
       myBet.toLocaleString();
   }
 
-
   renderTable();
+  renderBalance();
 
   await loadChat();
 }
 
-
-/* =========================================================
-   REALTIME
-========================================================= */
-
 function subscribeLobby() {
-
-  if (!currentLobby) {
-    return;
-  }
-
-
   if (lobbyChannel) {
-
-    supabase.removeChannel(
-      lobbyChannel
-    );
-
+    supabase.removeChannel(lobbyChannel);
   }
-
 
   lobbyChannel =
     supabase
-      .channel(
-        "lobby-" +
-        currentLobby.id
-      )
+      .channel("lobby-" + currentLobby.id)
 
       .on(
         "postgres_changes",
@@ -1288,10 +566,9 @@ function subscribeLobby() {
           event: "*",
           schema: "public",
           table: "lobbies",
-          filter:
-            `id=eq.${currentLobby.id}`
+          filter: `id=eq.${currentLobby.id}`
         },
-        () => refreshLobby()
+        refreshLobby
       )
 
       .on(
@@ -1300,10 +577,9 @@ function subscribeLobby() {
           event: "*",
           schema: "public",
           table: "lobby_players",
-          filter:
-            `lobby_id=eq.${currentLobby.id}`
+          filter: `lobby_id=eq.${currentLobby.id}`
         },
-        () => refreshLobby()
+        refreshLobby
       )
 
       .on(
@@ -1312,10 +588,9 @@ function subscribeLobby() {
           event: "*",
           schema: "public",
           table: "chat_messages",
-          filter:
-            `lobby_id=eq.${currentLobby.id}`
+          filter: `lobby_id=eq.${currentLobby.id}`
         },
-        () => loadChat()
+        loadChat
       )
 
       .subscribe();
@@ -1327,60 +602,26 @@ function subscribeLobby() {
 ========================================================= */
 
 async function loadChat() {
+  if (!currentLobby || !$("#chatLog")) return;
 
-  if (
-    !currentLobby ||
-    !$("#chatLog")
-  ) {
-    return;
-  }
-
-
-  const {
-    data,
-    error
-  } = await supabase
+  const { data } = await supabase
     .from("chat_messages")
     .select("*")
-    .eq(
-      "lobby_id",
-      currentLobby.id
-    )
-    .order(
-      "created_at",
-      { ascending: true }
-    )
+    .eq("lobby_id", currentLobby.id)
+    .order("created_at", {
+      ascending: true
+    })
     .limit(80);
-
-
-  if (error) {
-
-    console.error(
-      "Chat error:",
-      error
-    );
-
-    return;
-  }
-
 
   $("#chatLog").innerHTML =
     (data || [])
       .map(message => `
-
         <div class="chat-msg">
-
-          <strong>
-            ${esc(message.display_name)}
-          </strong>
-
+          <strong>${esc(message.display_name)}</strong>
           ${esc(message.message)}
-
         </div>
-
       `)
       .join("");
-
 
   $("#chatLog").scrollTop =
     $("#chatLog").scrollHeight;
@@ -1388,138 +629,124 @@ async function loadChat() {
 
 
 /* =========================================================
-   TABLE RENDERING
+   CARDS / TABLE RENDERING
 ========================================================= */
 
-function nameOf(id) {
+function cardHtml(card, back = false) {
+  if (back) {
+    return `<div class="card back">?</div>`;
+  }
 
+  const red =
+    card.suit === "♥" ||
+    card.suit === "♦";
+
+  return `
+    <div class="card ${red ? "red" : ""}">
+      <span>${card.rank}</span>
+      <span class="suit">${card.suit}</span>
+      <span>${card.rank}</span>
+    </div>
+  `;
+}
+
+function nameOf(id) {
   return (
     lobbyPlayers.find(
-      p => p.user_id === id
+      player => player.user_id === id
     )?.profiles?.display_name ||
     "player"
   );
-
 }
 
-
 function renderTable() {
-
-  if (
-    !currentLobby ||
-    !game
-  ) {
-    return;
-  }
-
+  if (!currentLobby || !game) return;
 
   const dealer =
     game.dealer || [];
 
-
   const hideHole =
     game.phase === "playing" &&
-    dealer.length > 1;
-
+    dealer.length >= 2;
 
   if ($("#dealerCards")) {
-
     $("#dealerCards").innerHTML =
       dealer
-        .map(
-          (card, index) =>
-            cardHtml(
-              card,
-              hideHole && index === 1
-            )
+        .map((card, index) =>
+          cardHtml(
+            card,
+            hideHole && index === 1
+          )
         )
         .join("");
-
   }
-
-
-  const dealerValue =
-    !hideHole && dealer.length
-      ? handValue(dealer).total
-      : "";
-
 
   if ($("#dealerMeta")) {
-
-    $("#dealerMeta").textContent =
-      hideHole
-        ? "Hole card hidden"
-        : dealer.length
-          ? `Total ${dealerValue}`
-          : "";
-
+    if (hideHole) {
+      $("#dealerMeta").textContent =
+        "Hole card hidden";
+    } else if (dealer.length) {
+      $("#dealerMeta").textContent =
+        `Total ${handValue(dealer).total}`;
+    } else {
+      $("#dealerMeta").textContent = "";
+    }
   }
-
 
   const phase =
     game.phase || "waiting";
 
-
   if ($("#tableStatus")) {
-
     if (phase === "waiting") {
-
       $("#tableStatus").textContent =
-        "Set your bets, then the host deals.";
-
+        "Place your bets, then the host deals.";
     } else if (phase === "playing") {
-
-      $("#tableStatus").textContent =
-        game.turn_user_id === user.id
-          ? "Your turn."
-          : `Waiting for ${nameOf(
-              game.turn_user_id
-            )}…`;
-
+      if (game.turn_user_id === user.id) {
+        $("#tableStatus").textContent =
+          "Your turn.";
+      } else {
+        $("#tableStatus").textContent =
+          `Waiting for ${nameOf(game.turn_user_id)}…`;
+      }
     } else if (phase === "dealer") {
-
       $("#tableStatus").textContent =
-        "Dealer is resolving the hand…";
-
+        "Dealer is resolving the hand.";
     } else if (phase === "finished") {
-
       $("#tableStatus").textContent =
         game.message ||
         "Round finished.";
-
     }
-
   }
 
-
   if ($("#playersZone")) {
-
     $("#playersZone").innerHTML =
       lobbyPlayers
         .map(player => {
+          const id =
+            player.user_id;
 
           const hand =
-            game.hands?.[player.user_id] ||
-            [];
+            game.hands?.[id] || [];
 
           const value =
             handValue(hand);
 
-          const isMe =
-            player.user_id === user.id;
-
           const bet =
-            Number(
-              game.bets?.[player.user_id] ||
-              0
-            );
+            Number(game.bets?.[id] || 0);
 
           const result =
-            game.results?.[player.user_id];
+            game.results?.[id];
 
+          const bankroll =
+            tableBankroll(id);
+
+          const isMe =
+            id === user.id;
+
+          const isDone =
+            !!game.done?.[id];
 
           return `
-
             <div class="seat ${isMe ? "me" : ""}">
 
               <div class="seat-name">
@@ -1530,9 +757,8 @@ function renderTable() {
               </div>
 
               ${
-                player.user_id ===
-                currentLobby.host_id
-                  ? `<div class="seat-host">HOST</div>`
+                id === currentLobby.host_id
+                  ? `<div class="seat-host">HOST / DEALER</div>`
                   : ""
               }
 
@@ -1551,11 +777,17 @@ function renderTable() {
                 hand.length
                   ? `
                     <div class="hand-meta">
-                      ${value.total}${value.soft ? " soft" : ""}
+                      ${value.total}
+                      ${value.soft ? " soft" : ""}
+                      ${isDone ? " · done" : ""}
                     </div>
                   `
                   : ""
               }
+
+              <div class="seat-ledger">
+                🪙 ${bankroll.toLocaleString()}
+              </div>
 
               ${
                 result
@@ -1567,44 +799,28 @@ function renderTable() {
                   : ""
               }
 
-              <div class="seat-ledger">
-                ${ledgerLabel(
-                  player.user_id
-                )}
-              </div>
-
             </div>
-
           `;
-
         })
         .join("");
-
   }
-
 
   const myHand =
     game.hands?.[user.id] || [];
-
 
   const myTurn =
     game.phase === "playing" &&
     game.turn_user_id === user.id;
 
-
   if ($("#playerActions")) {
-
     $("#playerActions")
       .classList.toggle(
         "hidden",
         !myTurn
       );
-
   }
 
-
   if ($("#dealerActionBtn")) {
-
     $("#dealerActionBtn")
       .classList.toggle(
         "hidden",
@@ -1613,358 +829,45 @@ function renderTable() {
           currentLobby.host_id === user.id
         )
       );
-
   }
 
-
+  /*
+    Host can start a new round when waiting
+    OR reset after a finished round.
+  */
   if ($("#startRoundBtn")) {
+    const host =
+      currentLobby.host_id === user.id;
+
+    const visible =
+      host &&
+      (
+        phase === "waiting" ||
+        phase === "finished"
+      );
 
     $("#startRoundBtn")
       .classList.toggle(
         "hidden",
-        !(
-          game.phase === "waiting" &&
-          currentLobby.host_id === user.id
-        )
+        !visible
       );
 
     $("#startRoundBtn").textContent =
-      "Deal round";
-
+      phase === "finished"
+        ? "New round"
+        : "Deal round";
   }
-
 
   if ($("#doubleBtn")) {
-
     $("#doubleBtn").disabled =
       !(
+        myTurn &&
         myHand.length === 2 &&
-        Number(profile?.balance || 0) >= myBet
+        tableBankroll(user.id) >= myBet
       );
-
   }
-
 
   renderDealerBank();
-}
-
-
-/* =========================================================
-   DEALER BANK
-========================================================= */
-
-function ledgerValue(id) {
-
-  return Number(
-    game?.ledger?.[id] || 0
-  );
-
-}
-
-
-function ledgerLabel(id) {
-
-  const amount =
-    ledgerValue(id);
-
-
-  if (amount > 0) {
-
-    return `
-      <span class="up">
-        Dealer owes ${amount.toLocaleString()}
-      </span>
-    `;
-
-  }
-
-
-  if (amount < 0) {
-
-    return `
-      <span class="down">
-        Owes dealer ${Math.abs(
-          amount
-        ).toLocaleString()}
-      </span>
-    `;
-
-  }
-
-
-  return `
-    <span>
-      Settled
-    </span>
-  `;
-}
-
-
-function renderDealerBank() {
-
-  const panel =
-    $("#dealerBankPanel");
-
-
-  if (!panel || !currentLobby) {
-    return;
-  }
-
-
-  const isDealer =
-    currentLobby.host_id === user.id;
-
-
-  panel.classList.toggle(
-    "hidden",
-    !isDealer
-  );
-
-
-  if (!isDealer) {
-    return;
-  }
-
-
-  const select =
-    $("#dealerPlayerSelect");
-
-
-  if (!select) {
-    return;
-  }
-
-
-  const current =
-    select.value;
-
-
-  select.innerHTML =
-    lobbyPlayers
-      .filter(
-        p =>
-          p.user_id !== user.id
-      )
-      .map(
-        p => `
-          <option value="${p.user_id}">
-            ${esc(
-              p.profiles?.display_name ||
-              "Player"
-            )}
-          </option>
-        `
-      )
-      .join("");
-
-
-  if (
-    [...select.options].some(
-      option =>
-        option.value === current
-    )
-  ) {
-
-    select.value = current;
-
-  }
-
-
-  const ledger =
-    $("#dealerLedger");
-
-
-  if (!ledger) {
-    return;
-  }
-
-
-  ledger.innerHTML =
-    lobbyPlayers
-      .filter(
-        p =>
-          p.user_id !== user.id
-      )
-      .map(player => {
-
-        const amount =
-          ledgerValue(
-            player.user_id
-          );
-
-
-        const className =
-          amount > 0
-            ? "up"
-            : amount < 0
-              ? "down"
-              : "even";
-
-
-        const text =
-          amount > 0
-            ? `+${amount.toLocaleString()} (dealer owes)`
-            : amount < 0
-              ? `-${Math.abs(
-                  amount
-                ).toLocaleString()} (owes dealer)`
-              : "0 (settled)";
-
-
-        return `
-
-          <div class="ledger-row">
-
-            <span>
-              ${esc(
-                player.profiles?.display_name ||
-                "Player"
-              )}
-            </span>
-
-            <strong class="${className}">
-              ${text}
-            </strong>
-
-          </div>
-
-        `;
-
-      })
-      .join("")
-      ||
-      `
-        <div class="muted small">
-          No other players yet.
-        </div>
-      `;
-}
-
-
-async function dealerAdjust(direction) {
-
-  if (
-    !currentLobby ||
-    currentLobby.host_id !== user.id
-  ) {
-
-    toast(
-      "Only the dealer can change the ledger."
-    );
-
-    return;
-  }
-
-
-  const target =
-    $("#dealerPlayerSelect")?.value;
-
-
-  const amount =
-    Math.floor(
-      Number(
-        $("#dealerAmount")?.value
-      )
-    );
-
-
-  if (!target) {
-
-    toast(
-      "Choose a player."
-    );
-
-    return;
-  }
-
-
-  if (
-    !Number.isFinite(amount) ||
-    amount <= 0
-  ) {
-
-    toast(
-      "Enter a positive amount."
-    );
-
-    return;
-  }
-
-
-  const next =
-    currentGame();
-
-
-  next.ledger = {
-    ...(next.ledger || {})
-  };
-
-
-  next.ledger[target] =
-    Number(
-      next.ledger[target] || 0
-    ) +
-    (
-      direction === "give"
-        ? amount
-        : -amount
-    );
-
-
-  await saveGame(next);
-
-
-  if ($("#dealerAmount")) {
-    $("#dealerAmount").value = "";
-  }
-
-}
-
-
-/* =========================================================
-   SAVE GAME
-========================================================= */
-
-async function saveGame(next) {
-
-  game = next;
-
-
-  const {
-    error
-  } = await supabase
-    .from("lobbies")
-    .update({
-      game,
-      status:
-        game.phase === "waiting"
-          ? "waiting"
-          : game.phase === "finished"
-            ? "finished"
-            : "playing"
-    })
-    .eq(
-      "id",
-      currentLobby.id
-    );
-
-
-  if (error) {
-
-    console.error(
-      "Save game error:",
-      error
-    );
-
-    toast(error.message);
-
-    return false;
-  }
-
-
-  renderTable();
-
-  return true;
 }
 
 
@@ -1973,66 +876,62 @@ async function saveGame(next) {
 ========================================================= */
 
 async function setBet(amount) {
+  amount = Number(amount);
 
-  amount =
-    Math.floor(
-      Number(amount)
-    );
-
-
-  if (
-    !Number.isFinite(amount) ||
-    amount < 5 ||
-    amount % 5 !== 0
-  ) {
-
-    toast(
-      "Bet must be a multiple of 5."
-    );
-
+  if (!Number.isFinite(amount)) {
+    toast("Enter a valid bet.");
     return;
   }
 
+  amount = Math.floor(amount);
 
-  if (
-    amount >
-    Number(profile?.balance || 0)
-  ) {
-
-    toast(
-      "Not enough virtual chips."
-    );
-
+  if (amount < 5) {
+    toast("Minimum bet is 5.");
     return;
   }
 
-
-  if (
-    game?.phase !== "waiting"
-  ) {
-
-    toast(
-      "Bets can only be changed before a deal."
-    );
-
+  if (amount % 5 !== 0) {
+    toast("Bet must be a multiple of 5.");
     return;
   }
 
+  if (game?.phase !== "waiting") {
+    toast("You can only change your bet before the deal.");
+    return;
+  }
 
-  const next =
-    currentGame();
+  const bankroll =
+    tableBankroll(user.id);
 
+  if (amount > bankroll) {
+    toast("You do not have enough table chips.");
+    return;
+  }
 
-  next.bets = {
-    ...(next.bets || {}),
-    [user.id]: amount
-  };
+  const g = currentGame();
 
+  g.bankrolls =
+    g.bankrolls || {};
+
+  g.bets =
+    g.bets || {};
+
+  g.bets[user.id] =
+    amount;
+
+  /*
+    Ensure the player has a table bankroll.
+  */
+  if (!Number.isFinite(
+    Number(g.bankrolls[user.id])
+  )) {
+    g.bankrolls[user.id] =
+      startingChips();
+  }
 
   myBet = amount;
 
-
-  await saveGame(next);
+  await saveGame(g);
 }
 
 
@@ -2041,153 +940,196 @@ async function setBet(amount) {
 ========================================================= */
 
 async function startRound() {
+  if (!currentLobby) return;
 
-  if (
-    !currentLobby ||
-    currentLobby.host_id !== user.id
-  ) {
-
-    toast(
-      "Only the host can deal."
-    );
-
+  if (currentLobby.host_id !== user.id) {
+    toast("Only the dealer can deal.");
     return;
   }
 
+  /*
+    If previous round finished,
+    clear the previous hand but keep
+    everyone's table bankroll.
+  */
+  if (game?.phase === "finished") {
+    game = {
+      phase: "waiting",
+      shoe: [],
+      dealer: [],
+      hands: {},
+      bets: {},
+      bankrolls: {
+        ...(game.bankrolls || {})
+      },
+      done: {},
+      results: {},
+      ledger: {
+        ...(game.ledger || {})
+      },
+      turn_user_id: null,
+      message: ""
+    };
+
+    ensureBankrolls(game);
+
+    await saveGame(game);
+    return;
+  }
+
+  const g = currentGame();
+
+  ensureBankrolls(g);
+
+  g.bets =
+    g.bets || {};
 
   const activePlayers =
-    lobbyPlayers.filter(
-      player =>
-        Number(
-          game?.bets?.[player.user_id] || 0
-        ) > 0
-    );
+    lobbyPlayers.filter(player => {
+      const bet =
+        Number(g.bets[player.user_id] || 0);
 
+      const chips =
+        Number(g.bankrolls[player.user_id] || 0);
+
+      return bet > 0 && chips >= bet;
+    });
 
   if (!activePlayers.length) {
-
-    toast(
-      "At least one player needs a bet."
-    );
-
+    toast("At least one player needs a valid bet.");
     return;
   }
 
+  /*
+    Validate every bet before dealing.
+  */
+  for (const player of activePlayers) {
+    const bet =
+      Number(g.bets[player.user_id]);
+
+    const chips =
+      Number(g.bankrolls[player.user_id] || 0);
+
+    if (bet < 5) {
+      toast(
+        `${nameOf(player.user_id)} has an invalid bet.`
+      );
+      return;
+    }
+
+    if (bet > chips) {
+      toast(
+        `${nameOf(player.user_id)} does not have enough chips.`
+      );
+      return;
+    }
+  }
 
   const shoe =
     makeShoe(6);
 
-
   const hands = {};
 
-
-  const bets = {
-    ...(game?.bets || {})
-  };
-
-
+  /*
+    Deal two cards to every player.
+  */
   for (const player of activePlayers) {
-
     hands[player.user_id] = [
       shoe.pop(),
       shoe.pop()
     ];
-
   }
 
-
+  /*
+    Dealer gets two cards.
+  */
   const dealer = [
     shoe.pop(),
     shoe.pop()
   ];
 
+  const bets = {
+    ...g.bets
+  };
 
-  const next = {
+  const bankrolls = {
+    ...g.bankrolls
+  };
 
-    phase: "playing",
+  const done = {};
+
+  /*
+    Remove each wager from the player's
+    table bankroll.
+  */
+  for (const player of activePlayers) {
+    const id =
+      player.user_id;
+
+    const bet =
+      Number(bets[id]);
+
+    bankrolls[id] =
+      Number(bankrolls[id] || 0) - bet;
+  }
+
+  /*
+    Natural blackjacks do not need a turn.
+  */
+  for (const player of activePlayers) {
+    const id =
+      player.user_id;
+
+    const hand =
+      hands[id];
+
+    if (
+      isBlackjack(hand) ||
+      isBust(hand)
+    ) {
+      done[id] = true;
+    } else {
+      done[id] = false;
+    }
+  }
+
+  /*
+    Find first player who actually needs
+    to make a decision.
+  */
+  let firstTurn = null;
+
+  for (const player of activePlayers) {
+    if (!done[player.user_id]) {
+      firstTurn = player.user_id;
+      break;
+    }
+  }
+
+  const nextGame = {
+    phase:
+      firstTurn
+        ? "playing"
+        : "dealer",
 
     shoe,
-
     dealer,
-
     hands,
-
     bets,
-
+    bankrolls,
+    done,
     results: {},
-
     ledger: {
-      ...(game?.ledger || {})
+      ...(g.ledger || {})
     },
 
     turn_user_id:
-      activePlayers[0].user_id,
+      firstTurn,
 
     message: ""
-
   };
 
-
-  /*
-    Deduct the bets.
-
-    This keeps your existing play-money
-    system intact for now.
-  */
-
-  for (const player of activePlayers) {
-
-    const bet =
-      Number(
-        bets[player.user_id] || 0
-      );
-
-
-    if (!bet) {
-      continue;
-    }
-
-
-    const oldBalance =
-      Number(
-        player.profiles?.balance || 0
-      );
-
-
-    const {
-      error
-    } = await supabase
-      .from("profiles")
-      .update({
-        balance:
-          Math.max(
-            0,
-            oldBalance - bet
-          )
-      })
-      .eq(
-        "id",
-        player.user_id
-      );
-
-
-    if (error) {
-
-      console.error(
-        "Bet deduction error:",
-        error
-      );
-
-    }
-
-  }
-
-
-  await saveGame(next);
-
-  await getProfile();
-
-  await refreshLobby();
+  await saveGame(nextGame);
 }
 
 
@@ -2196,212 +1138,181 @@ async function startRound() {
 ========================================================= */
 
 async function playerAction(type) {
+  if (!game) return;
 
   if (
-    !game ||
     game.phase !== "playing" ||
     game.turn_user_id !== user.id
   ) {
-
     return;
   }
 
-
-  const next =
+  const g =
     currentGame();
 
-
   const hand =
-    next.hands[user.id] || [];
-
+    g.hands[user.id] || [];
 
   const bet =
-    Number(
-      next.bets[user.id] || 0
-    );
+    Number(g.bets[user.id] || 0);
 
+  if (!bet) {
+    toast("You do not have a bet.");
+    return;
+  }
 
+  /*
+    HIT
+  */
   if (type === "hit") {
-
     const card =
-      next.shoe.pop();
-
+      g.shoe.pop();
 
     if (!card) {
-
-      toast(
-        "The shoe is empty."
-      );
-
+      toast("The shoe is empty.");
       return;
     }
 
-
-    next.hands[user.id] = [
-      ...hand,
-      card
-    ];
-
+    g.hands[user.id] =
+      [...hand, card];
 
     const value =
-      handValue(
-        next.hands[user.id]
-      );
+      handValue(g.hands[user.id]);
 
-
+    /*
+      Bust or 21 automatically ends
+      the player's turn.
+    */
     if (value.total >= 21) {
+      g.done[user.id] = true;
 
-      next.turn_user_id =
-        nextTurn(
-          next,
-          user.id
-        );
-
+      g.turn_user_id =
+        nextTurn(g, user.id);
     }
-
   }
 
-
+  /*
+    STAND
+  */
   else if (type === "stand") {
+    g.done[user.id] = true;
 
-    next.turn_user_id =
-      nextTurn(
-        next,
-        user.id
-      );
-
+    g.turn_user_id =
+      nextTurn(g, user.id);
   }
 
-
+  /*
+    DOUBLE DOWN
+  */
   else if (type === "double") {
-
-    if (
-      hand.length !== 2 ||
-      Number(profile?.balance || 0) < bet
-    ) {
-
-      toast(
-        "Double unavailable."
-      );
-
+    if (hand.length !== 2) {
+      toast("You can only double on your first two cards.");
       return;
     }
 
+    const bankroll =
+      Number(g.bankrolls[user.id] || 0);
 
-    const card =
-      next.shoe.pop();
-
-
-    if (!card) {
-
-      toast(
-        "The shoe is empty."
-      );
-
+    if (bankroll < bet) {
+      toast("Not enough chips to double.");
       return;
     }
 
+    /*
+      Put another equal wager down.
+    */
+    g.bankrolls[user.id] =
+      bankroll - bet;
 
-    const {
-      error
-    } = await supabase
-      .from("profiles")
-      .update({
-        balance:
-          Number(profile.balance) - bet
-      })
-      .eq(
-        "id",
-        user.id
-      );
-
-
-    if (error) {
-
-      toast(
-        "Could not place the double bet: " +
-        error.message
-      );
-
-      return;
-    }
-
-
-    next.bets[user.id] =
+    g.bets[user.id] =
       bet * 2;
 
+    const card =
+      g.shoe.pop();
 
-    next.hands[user.id] = [
-      ...hand,
-      card
-    ];
+    if (!card) {
+      toast("The shoe is empty.");
+      return;
+    }
 
+    g.hands[user.id] =
+      [...hand, card];
 
-    next.turn_user_id =
-      nextTurn(
-        next,
-        user.id
-      );
+    /*
+      Double always ends the turn.
+    */
+    g.done[user.id] = true;
 
-
-    await getProfile();
-
+    g.turn_user_id =
+      nextTurn(g, user.id);
   }
 
-
-  if (!next.turn_user_id) {
-
-    next.phase = "dealer";
-
+  /*
+    If nobody is left to play,
+    move to dealer phase.
+  */
+  if (!g.turn_user_id) {
+    g.phase = "dealer";
   }
 
+  await saveGame(g);
 
-  await saveGame(next);
+  renderBalance();
 }
 
 
-function nextTurn(next, currentUserId) {
+/* =========================================================
+   TURN MANAGEMENT
+========================================================= */
 
-  const ids =
+function nextTurn(g, currentId) {
+  const players =
     lobbyPlayers
-      .filter(
-        player =>
-          Number(
-            next.bets?.[player.user_id] || 0
-          ) > 0
-      )
-      .map(
-        player =>
-          player.user_id
-      );
+      .filter(player => {
+        const id =
+          player.user_id;
 
+        const bet =
+          Number(g.bets?.[id] || 0);
 
-  const currentIndex =
-    ids.indexOf(
-      currentUserId
-    );
+        return (
+          bet > 0 &&
+          !g.done?.[id]
+        );
+      })
+      .map(player => player.user_id);
 
-
-  for (
-    let i = currentIndex + 1;
-    i < ids.length;
-    i++
-  ) {
-
-    const hand =
-      next.hands[ids[i]] || [];
-
-
-    if (
-      handValue(hand).total < 21
-    ) {
-
-      return ids[i];
-
-    }
-
+  if (!players.length) {
+    return null;
   }
 
+  const allPlayers =
+    lobbyPlayers.map(
+      player => player.user_id
+    );
+
+  const currentIndex =
+    allPlayers.indexOf(currentId);
+
+  /*
+    Continue clockwise from the current player.
+  */
+  for (
+    let offset = 1;
+    offset <= allPlayers.length;
+    offset++
+  ) {
+    const index =
+      (currentIndex + offset) %
+      allPlayers.length;
+
+    const candidate =
+      allPlayers[index];
+
+    if (players.includes(candidate)) {
+      return candidate;
+    }
+  }
 
   return null;
 }
@@ -2412,221 +1323,204 @@ function nextTurn(next, currentUserId) {
 ========================================================= */
 
 async function runDealer() {
+  if (!currentLobby) return;
 
-  if (
-    !currentLobby ||
-    currentLobby.host_id !== user.id ||
-    game?.phase !== "dealer"
-  ) {
-
+  if (currentLobby.host_id !== user.id) {
+    toast("Only the dealer can resolve the hand.");
     return;
   }
 
-
-  const next =
-    currentGame();
-
-
-  while (
-    handValue(next.dealer).total < 17
-  ) {
-
-    const card =
-      next.shoe.pop();
-
-
-    if (!card) {
-      break;
-    }
-
-
-    next.dealer.push(card);
-
+  if (game?.phase !== "dealer") {
+    return;
   }
 
+  const g =
+    currentGame();
 
-  const dealerTotal =
-    handValue(
-      next.dealer
-    ).total;
+  /*
+    Dealer stands on all 17,
+    including soft 17.
+  */
+  while (
+    handValue(g.dealer).total < 17
+  ) {
+    const card =
+      g.shoe.pop();
 
+    if (!card) break;
+
+    g.dealer.push(card);
+  }
+
+  const dealerValue =
+    handValue(g.dealer).total;
+
+  const dealerBlackjack =
+    isBlackjack(g.dealer);
 
   const results = {};
 
-
-  for (
-    const player of lobbyPlayers
-  ) {
-
+  for (const player of lobbyPlayers) {
     const id =
       player.user_id;
 
-
     const bet =
-      Number(
-        next.bets?.[id] || 0
-      );
+      Number(g.bets?.[id] || 0);
 
+    if (!bet) continue;
 
     const hand =
-      next.hands?.[id] || [];
+      g.hands?.[id] || [];
 
-
-    if (!bet) {
-      continue;
-    }
-
-
-    const playerTotal =
+    const playerValue =
       handValue(hand).total;
 
+    const playerBlackjack =
+      isBlackjack(hand);
 
     let payout = 0;
-    let result = "";
+    let resultText = "";
 
+    /*
+      PLAYER BUST
+    */
+    if (playerValue > 21) {
+      payout = 0;
+      resultText = "Bust — lose";
+    }
 
-    if (playerTotal > 21) {
-
-      result =
-        "Bust — lose";
-
-
-    } else if (
-      isBlackjack(hand) &&
-      !isBlackjack(next.dealer)
+    /*
+      BOTH NATURAL BLACKJACKS
+    */
+    else if (
+      playerBlackjack &&
+      dealerBlackjack
     ) {
-
-      result =
-        "Blackjack — 3:2";
-
-      payout =
-        Math.floor(
-          bet * 2.5
-        );
-
-
-    } else if (
-      isBlackjack(hand) &&
-      isBlackjack(next.dealer)
-    ) {
-
-      result =
-        "Push";
-
       payout = bet;
+      resultText = "Blackjack — push";
+    }
 
-
-    } else if (
-      dealerTotal > 21 ||
-      playerTotal > dealerTotal
+    /*
+      PLAYER NATURAL BLACKJACK
+    */
+    else if (
+      playerBlackjack &&
+      !dealerBlackjack
     ) {
+      /*
+        Original wager is already removed.
+        Return wager + 3:2 winnings.
+      */
+      payout =
+        bet * 2.5;
 
-      result =
-        "Win";
+      resultText =
+        "Blackjack — pays 3:2";
+    }
 
+    /*
+      DEALER NATURAL
+    */
+    else if (
+      dealerBlackjack &&
+      !playerBlackjack
+    ) {
+      payout = 0;
+      resultText =
+        "Dealer blackjack — lose";
+    }
+
+    /*
+      DEALER BUST
+    */
+    else if (
+      dealerValue > 21
+    ) {
       payout =
         bet * 2;
 
-
-    } else if (
-      playerTotal === dealerTotal
-    ) {
-
-      result =
-        "Push";
-
-      payout = bet;
-
-
-    } else {
-
-      result =
-        "Dealer wins";
-
+      resultText =
+        "Win — dealer busts";
     }
-
-
-    results[id] = result;
-
 
     /*
-      Preserve the existing balance behavior.
+      PLAYER HIGHER
     */
+    else if (
+      playerValue > dealerValue
+    ) {
+      payout =
+        bet * 2;
 
-    if (payout > 0) {
-
-      const oldBalance =
-        Number(
-          player.profiles?.balance || 0
-        );
-
-
-      const {
-        error
-      } = await supabase
-        .from("profiles")
-        .update({
-          balance:
-            oldBalance + payout
-        })
-        .eq(
-          "id",
-          id
-        );
-
-
-      if (error) {
-
-        console.error(
-          "Payout error:",
-          error
-        );
-
-      }
-
+      resultText =
+        "Win";
     }
 
+    /*
+      PUSH
+    */
+    else if (
+      playerValue === dealerValue
+    ) {
+      payout =
+        bet;
+
+      resultText =
+        "Push";
+    }
+
+    /*
+      DEALER HIGHER
+    */
+    else {
+      payout = 0;
+      resultText =
+        "Dealer wins";
+    }
+
+    /*
+      Return winnings/pushes to the
+      player's table bankroll.
+    */
+    g.bankrolls[id] =
+      Number(g.bankrolls[id] || 0) +
+      payout;
+
+    results[id] =
+      resultText;
   }
 
-
-  next.results =
+  g.results =
     results;
 
-  next.phase =
+  g.phase =
     "finished";
 
-  next.message =
-    `Dealer: ${dealerTotal}. Start a new round when ready.`;
-
-  next.turn_user_id =
+  g.turn_user_id =
     null;
 
+  g.message =
+    `Dealer: ${dealerValue}.`;
 
-  await saveGame(next);
+  await saveGame(g);
 
-  await getProfile();
-
-  await refreshLobby();
+  renderBalance();
 }
 
 
 /* =========================================================
-   RESET
+   NEW ROUND
 ========================================================= */
 
 async function resetRound() {
+  if (!currentLobby) return;
 
-  if (
-    !currentLobby ||
-    currentLobby.host_id !== user.id
-  ) {
-
+  if (currentLobby.host_id !== user.id) {
+    toast("Only the dealer can start a new round.");
     return;
   }
 
-
-  const next = {
-
+  const g = {
     phase: "waiting",
 
     shoe: [],
@@ -2637,6 +1531,12 @@ async function resetRound() {
 
     bets: {},
 
+    bankrolls: {
+      ...(game?.bankrolls || {})
+    },
+
+    done: {},
+
     results: {},
 
     ledger: {
@@ -2646,32 +1546,266 @@ async function resetRound() {
     turn_user_id: null,
 
     message: ""
-
   };
 
+  ensureBankrolls(g);
 
-  await saveGame(next);
+  await saveGame(g);
 
-  await getProfile();
-
-  await refreshLobby();
+  renderBalance();
 }
 
 
 /* =========================================================
-   LEAVE
+   DEALER BANK / LEDGER
 ========================================================= */
 
-async function leaveLobby() {
+function ledgerValue(id) {
+  return Number(
+    game?.ledger?.[id] || 0
+  );
+}
 
-  if (!currentLobby) {
+function ledgerLabel(id) {
+  const value =
+    ledgerValue(id);
+
+  if (value > 0) {
+    return `
+      <span class="up">
+        Dealer owes ${value.toLocaleString()}
+      </span>
+    `;
+  }
+
+  if (value < 0) {
+    return `
+      <span class="down">
+        Owes dealer ${Math.abs(value).toLocaleString()}
+      </span>
+    `;
+  }
+
+  return `<span>Settled</span>`;
+}
+
+function renderDealerBank() {
+  if (
+    !currentLobby ||
+    !game ||
+    !$("#dealerBankPanel")
+  ) {
     return;
   }
 
+  const isDealer =
+    currentLobby.host_id === user.id;
 
-  const {
-    error
-  } = await supabase
+  $("#dealerBankPanel")
+    .classList.toggle(
+      "hidden",
+      !isDealer
+    );
+
+  if (!isDealer) return;
+
+  const select =
+    $("#dealerPlayerSelect");
+
+  if (!select) return;
+
+  const previous =
+    select.value;
+
+  select.innerHTML =
+    lobbyPlayers
+      .filter(
+        player =>
+          player.user_id !== user.id
+      )
+      .map(
+        player => `
+          <option value="${player.user_id}">
+            ${esc(
+              player.profiles?.display_name ||
+              "Player"
+            )}
+          </option>
+        `
+      )
+      .join("");
+
+  if (
+    [...select.options]
+      .some(
+        option =>
+          option.value === previous
+      )
+  ) {
+    select.value =
+      previous;
+  }
+
+  if ($("#dealerLedger")) {
+    $("#dealerLedger").innerHTML =
+      lobbyPlayers
+        .filter(
+          player =>
+            player.user_id !== user.id
+        )
+        .map(player => {
+          const value =
+            ledgerValue(
+              player.user_id
+            );
+
+          const className =
+            value > 0
+              ? "up"
+              : value < 0
+                ? "down"
+                : "even";
+
+          const text =
+            value > 0
+              ? `+${value.toLocaleString()} (dealer owes)`
+              : value < 0
+                ? `-${Math.abs(value).toLocaleString()} (owes dealer)`
+                : "0 (settled)";
+
+          return `
+            <div class="ledger-row">
+              <span>
+                ${esc(
+                  player.profiles?.display_name ||
+                  "Player"
+                )}
+              </span>
+
+              <strong class="${className}">
+                ${text}
+              </strong>
+            </div>
+          `;
+        })
+        .join("") ||
+      `<div class="muted small">
+        No other players yet.
+      </div>`;
+  }
+}
+
+async function dealerAdjust(direction) {
+  if (
+    !currentLobby ||
+    currentLobby.host_id !== user.id
+  ) {
+    toast("Only the dealer can change the ledger.");
+    return;
+  }
+
+  const target =
+    $("#dealerPlayerSelect")?.value;
+
+  const amount =
+    Math.floor(
+      Number(
+        $("#dealerAmount")?.value
+      )
+    );
+
+  if (!target) {
+    toast("Choose a player.");
+    return;
+  }
+
+  if (
+    !Number.isFinite(amount) ||
+    amount <= 0
+  ) {
+    toast("Enter a positive amount.");
+    return;
+  }
+
+  const g =
+    currentGame();
+
+  g.ledger =
+    g.ledger || {};
+
+  const oldValue =
+    Number(g.ledger[target] || 0);
+
+  g.ledger[target] =
+    oldValue +
+    (
+      direction === "give"
+        ? amount
+        : -amount
+    );
+
+  await saveGame(g);
+
+  if ($("#dealerAmount")) {
+    $("#dealerAmount").value = "";
+  }
+}
+
+
+/* =========================================================
+   SAVE GAME
+========================================================= */
+
+function currentGame() {
+  return JSON.parse(
+    JSON.stringify(
+      game || {}
+    )
+  );
+}
+
+async function saveGame(next) {
+  if (!currentLobby) return;
+
+  game = next;
+
+  const status =
+    game.phase === "waiting"
+      ? "waiting"
+      : game.phase === "finished"
+        ? "finished"
+        : "playing";
+
+  const { error } =
+    await supabase
+      .from("lobbies")
+      .update({
+        game,
+        status
+      })
+      .eq(
+        "id",
+        currentLobby.id
+      );
+
+  if (error) {
+    toast(error.message);
+    return;
+  }
+
+  renderTable();
+  renderBalance();
+}
+
+
+/* =========================================================
+   LEAVE LOBBY
+========================================================= */
+
+async function leaveLobby() {
+  if (!currentLobby) return;
+
+  await supabase
     .from("lobby_players")
     .delete()
     .eq(
@@ -2683,34 +1817,381 @@ async function leaveLobby() {
       user.id
     );
 
-
-  if (error) {
-
-    toast(error.message);
-
-    return;
-  }
-
-
   if (lobbyChannel) {
-
-    await supabase.removeChannel(
+    supabase.removeChannel(
       lobbyChannel
     );
 
     lobbyChannel = null;
   }
 
-
   currentLobby = null;
-  lobbyPlayers = [];
   game = null;
-  myBet = 0;
-
+  lobbyPlayers = [];
 
   show("home");
 
   await loadLobbies();
+
+  renderBalance();
+}
+
+
+/* =========================================================
+   LOGOUT
+========================================================= */
+
+async function logout() {
+  await supabase.auth.signOut();
+}
+
+
+/* =========================================================
+   AUTH / PAGE STARTUP
+========================================================= */
+
+async function boot() {
+  if (!supabase) {
+    toast(
+      "Supabase configuration is missing."
+    );
+    return;
+  }
+
+  const {
+    data
+  } = await supabase.auth.getSession();
+
+  if (data.session) {
+    user =
+      data.session.user;
+
+    await getProfile();
+
+    /*
+      If this is game.html, load the game.
+    */
+    if (
+      window.location.pathname.endsWith(
+        "/game.html"
+      )
+    ) {
+      await enterGame();
+    }
+  } else {
+    /*
+      If game.html is opened without a session,
+      send the user back to login.
+    */
+    if (
+      window.location.pathname.endsWith(
+        "/game.html"
+      )
+    ) {
+      window.location.replace(
+        "index.html"
+      );
+    }
+  }
+
+  supabase.auth.onAuthStateChange(
+    async (_event, session) => {
+      user =
+        session?.user || null;
+
+      if (!user) {
+        window.location.replace(
+          "index.html"
+        );
+        return;
+      }
+
+      await getProfile();
+
+      if (
+        window.location.pathname.endsWith(
+          "/game.html"
+        )
+      ) {
+        await enterGame();
+      } else {
+        window.location.replace(
+          "game.html"
+        );
+      }
+    }
+  );
+}
+
+async function enterGame() {
+  if (!user) return;
+
+  if ($("#appView")) {
+    $("#appView")
+      .classList.remove("hidden");
+  }
+
+  if ($("#authView")) {
+    $("#authView")
+      .classList.add("hidden");
+  }
+
+  renderBalance();
+
+  await loadLobbies();
+}
+
+
+/* =========================================================
+   BUTTONS / EVENTS
+========================================================= */
+
+function initializeButtons() {
+
+  /*
+    Home
+  */
+
+  if ($("#createLobbyBtn")) {
+    $("#createLobbyBtn").onclick =
+      () => {
+        $("#createModal")
+          ?.classList
+          .remove("hidden");
+      };
+  }
+
+  if ($("#confirmCreateLobby")) {
+    $("#confirmCreateLobby").onclick =
+      createLobby;
+  }
+
+  if ($("#backHomeBtn")) {
+    $("#backHomeBtn").onclick =
+      async () => {
+        if (lobbyChannel) {
+          supabase.removeChannel(
+            lobbyChannel
+          );
+          lobbyChannel = null;
+        }
+
+        currentLobby = null;
+        game = null;
+        lobbyPlayers = [];
+
+        show("home");
+
+        await loadLobbies();
+
+        renderBalance();
+      };
+  }
+
+
+  /*
+    Profile
+  */
+
+  if ($("#profileBtn")) {
+    $("#profileBtn").onclick =
+      () => {
+        $("#profileModal")
+          ?.classList
+          .remove("hidden");
+      };
+  }
+
+  $$("[data-close]").forEach(button => {
+    button.onclick = () => {
+      const target =
+        button.dataset.close;
+
+      if (target) {
+        $("#" + target)
+          ?.classList
+          .add("hidden");
+      }
+    };
+  });
+
+  if ($("#logoutBtn")) {
+    $("#logoutBtn").onclick =
+      logout;
+  }
+
+
+  /*
+    Invite code
+  */
+
+  if ($("#copyCodeBtn")) {
+    $("#copyCodeBtn").onclick =
+      async () => {
+        if (!currentLobby) return;
+
+        try {
+          await navigator.clipboard.writeText(
+            currentLobby.invite_code
+          );
+
+          toast(
+            "Invite code copied."
+          );
+        } catch {
+          toast(
+            `Invite code: ${currentLobby.invite_code}`
+          );
+        }
+      };
+  }
+
+
+  /*
+    Betting
+  */
+
+  $$(".chip-btn").forEach(button => {
+    button.onclick =
+      () => {
+        setBet(
+          Number(
+            button.dataset.bet
+          )
+        );
+      };
+  });
+
+  if ($("#setBetBtn")) {
+    $("#setBetBtn").onclick =
+      () => {
+        setBet(
+          Number(
+            $("#customBet").value
+          )
+        );
+      };
+  }
+
+
+  /*
+    Deal / new round
+  */
+
+  if ($("#startRoundBtn")) {
+    $("#startRoundBtn").onclick =
+      async () => {
+        if (
+          game?.phase ===
+          "finished"
+        ) {
+          await resetRound();
+        } else {
+          await startRound();
+        }
+      };
+  }
+
+
+  /*
+    Player actions
+  */
+
+  if ($("#hitBtn")) {
+    $("#hitBtn").onclick =
+      () => playerAction("hit");
+  }
+
+  if ($("#standBtn")) {
+    $("#standBtn").onclick =
+      () => playerAction("stand");
+  }
+
+  if ($("#doubleBtn")) {
+    $("#doubleBtn").onclick =
+      () => playerAction("double");
+  }
+
+
+  /*
+    Dealer
+  */
+
+  if ($("#dealerActionBtn")) {
+    $("#dealerActionBtn").onclick =
+      runDealer;
+  }
+
+  if ($("#dealerGiveBtn")) {
+    $("#dealerGiveBtn").onclick =
+      () =>
+        dealerAdjust("give");
+  }
+
+  if ($("#dealerTakeBtn")) {
+    $("#dealerTakeBtn").onclick =
+      () =>
+        dealerAdjust("take");
+  }
+
+
+  /*
+    Leave
+  */
+
+  if ($("#leaveLobbyBtn")) {
+    $("#leaveLobbyBtn").onclick =
+      leaveLobby;
+  }
+
+
+  /*
+    Chat
+  */
+
+  if ($("#chatForm")) {
+    $("#chatForm").onsubmit =
+      async event => {
+        event.preventDefault();
+
+        if (!currentLobby || !user) {
+          return;
+        }
+
+        const input =
+          $("#chatInput");
+
+        const message =
+          input?.value.trim();
+
+        if (!message) return;
+
+        const {
+          error
+        } = await supabase
+          .from("chat_messages")
+          .insert({
+            lobby_id:
+              currentLobby.id,
+
+            user_id:
+              user.id,
+
+            display_name:
+              profile?.display_name ||
+              "Player",
+
+            message
+          });
+
+        if (error) {
+          toast(error.message);
+          return;
+        }
+
+        input.value = "";
+      };
+  }
 }
 
 
@@ -2718,4 +2199,5 @@ async function leaveLobby() {
    START
 ========================================================= */
 
-startApplication();
+initializeButtons();
+boot();
