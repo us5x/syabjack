@@ -1,517 +1,332 @@
 <!doctype html>
+
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#07110d">
   <title>Blackjack Friends</title>
-
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@700;800&display=swap" rel="stylesheet">
-
   <link rel="stylesheet" href="styles.css">
 </head>
-
 <body>
-  <div id="toast" class="toast"></div>
-
-  <main class="shell">
-
-    <section id="appView" class="app">
-
-      <header class="topbar">
-        <div class="brand-small">
-          <span>♠</span> Blackjack Friends
+<div id="toast" class="toast"></div>
+<main class="shell">
+  <section id="appView" class="app">
+<header class="topbar">
+  <div class="brand-small">
+    <span>♠</span> Blackjack Friends
+  </div>
+  <div class="top-actions">
+    <div class="balance-pill">
+      🪙 <strong id="topBalance">0</strong>
+    </div>
+    <button id="profileBtn" class="icon-btn" title="Account">
+      ☰
+    </button>
+  </div>
+</header>
+<div class="page">
+  <!-- HOME -->
+  <div id="homeView">
+    <div class="hero">
+      <div>
+        <div class="eyebrow">YOUR PRIVATE CASINO</div>
+        <h2>
+          Pick a table.<br>
+          <em>Deal the night.</em>
+        </h2>
+        <p>
+          Invite your friends, take a seat and play blackjack together in realtime.
+        </p>
+      </div>
+      <div class="hero-card-stack" aria-hidden="true">
+        <div class="playing-card red rotate-left">
+          A<span>♥</span>
         </div>
-
-        <div class="top-actions">
-          <div class="balance-pill">
-            🪙 <strong id="topBalance">0</strong>
+        <div class="playing-card dark rotate-right">
+          K<span>♣</span>
+        </div>
+      </div>
+    </div>
+    <div class="section-head">
+      <div>
+        <div class="eyebrow">TABLES</div>
+        <h3>Join a lobby</h3>
+      </div>
+      <button id="createLobbyBtn" class="primary">
+        ＋ New table
+      </button>
+    </div>
+    <div id="lobbyList" class="lobby-list"></div>
+    <div id="emptyLobbies" class="empty hidden">
+      <div class="empty-icon">♣</div>
+      <strong>No tables yet</strong>
+      <span>
+        Create one and send the invite code to your friends.
+      </span>
+    </div>
+  </div>
+  <!-- LOBBY -->
+  <div id="lobbyView" class="hidden">
+    <div class="lobby-head">
+      <button id="backHomeBtn" class="ghost">
+        ← Tables
+      </button>
+      <div>
+        <div class="eyebrow">PRIVATE TABLE</div>
+        <h2 id="lobbyTitle">Lobby</h2>
+      </div>
+      <div class="invite-box">
+        <span>Invite code</span>
+        <button id="copyCodeBtn" class="code-btn">
+          ------
+        </button>
+      </div>
+    </div>
+    <div class="table-layout">
+      <!-- TABLE -->
+      <div class="felt">
+        <div class="felt-noise"></div>
+        <div class="dealer-zone">
+          <div class="zone-label">
+            DEALER
           </div>
-
-          <button id="profileBtn" class="icon-btn" title="Account">
-            ☰
+          <div id="dealerCards" class="cards"></div>
+          <div id="dealerMeta" class="hand-meta"></div>
+        </div>
+        <div id="tableStatus" class="table-status">
+          Waiting for players…
+        </div>
+        <div id="playersZone" class="players-zone"></div>
+      </div>
+      <!-- SIDE PANEL -->
+      <aside class="side-panel">
+        <div class="panel-section">
+          <div class="section-label">
+            TABLE
+          </div>
+          <div id="playerCount" class="big-number">
+            0 / 7
+          </div>
+          <div id="hostLabel" class="muted">
+            Host: —
+          </div>
+        </div>
+        <!-- BET -->
+        <div class="panel-section">
+          <div class="section-label">
+            YOUR BET
+          </div>
+          <div class="bet-row">
+            <button class="chip-btn" data-bet="5">
+              5
+            </button>
+            <button class="chip-btn" data-bet="25">
+              25
+            </button>
+            <button class="chip-btn" data-bet="100">
+              100
+            </button>
+            <button class="chip-btn" data-bet="500">
+              500
+            </button>
+          </div>
+          <div class="custom-bet">
+            <input
+              id="customBet"
+              type="number"
+              min="5"
+              step="5"
+              placeholder="Custom"
+            >
+            <button id="setBetBtn" class="secondary">
+              Set
+            </button>
+          </div>
+          <div class="current-bet">
+            Bet:
+            <strong id="currentBet">0</strong>
+          </div>
+        </div>
+        <!-- ACTIONS -->
+        <div class="panel-section action-section">
+          <button
+            id="startRoundBtn"
+            class="primary wide"
+          >
+            Deal round
+          </button>
+          <div
+            id="playerActions"
+            class="action-grid hidden"
+          >
+            <button id="hitBtn" class="primary">
+              Hit
+            </button>
+            <button id="standBtn" class="secondary">
+              Stand
+            </button>
+            <button id="doubleBtn" class="secondary">
+              Double
+            </button>
+          </div>
+          <button
+            id="dealerActionBtn"
+            class="dealer-action wide hidden"
+          >
+            Run dealer
           </button>
         </div>
-      </header>
-
-      <div class="page">
-
-        <!-- HOME -->
-
-        <div id="homeView">
-
-          <div class="hero">
-            <div>
-              <div class="eyebrow">YOUR PRIVATE CASINO</div>
-
-              <h2>
-                Pick a table.<br>
-                <em>Deal the night.</em>
-              </h2>
-
-              <p>
-                Invite your friends, take a seat and play blackjack together in realtime.
-              </p>
-            </div>
-
-            <div class="hero-card-stack" aria-hidden="true">
-              <div class="playing-card red rotate-left">
-                A<span>♥</span>
-              </div>
-
-              <div class="playing-card dark rotate-right">
-                K<span>♣</span>
-              </div>
-            </div>
+        <!-- DEALER BANK -->
+        <div
+          id="dealerBankPanel"
+          class="panel-section hidden"
+        >
+          <div class="section-label">
+            DEALER BANK
           </div>
-
-
-          <div class="section-head">
-            <div>
-              <div class="eyebrow">TABLES</div>
-              <h3>Join a lobby</h3>
-            </div>
-
-            <button id="createLobbyBtn" class="primary">
-              ＋ New table
+          <div
+            class="muted small"
+            style="margin:5px 0 10px"
+          >
+            Positive = dealer owes them.
+            Negative = they owe dealer.
+          </div>
+          <select id="dealerPlayerSelect"></select>
+          <div
+            class="custom-bet"
+            style="margin-top:8px"
+          >
+            <input
+              id="dealerAmount"
+              type="number"
+              min="1"
+              step="1"
+              placeholder="Amount"
+            >
+          </div>
+          <div class="dealer-money-grid">
+            <button
+              id="dealerGiveBtn"
+              class="secondary"
+            >
+              Give money
+            </button>
+            <button
+              id="dealerTakeBtn"
+              class="secondary"
+            >
+              Take money
             </button>
           </div>
-
-
-          <div id="lobbyList" class="lobby-list"></div>
-
-
-          <div id="emptyLobbies" class="empty hidden">
-            <div class="empty-icon">♣</div>
-
-            <strong>No tables yet</strong>
-
-            <span>
-              Create one and send the invite code to your friends.
-            </span>
-          </div>
-
+          <div id="dealerLedger" class="ledger"></div>
         </div>
-
-
-        <!-- LOBBY -->
-
-        <div id="lobbyView" class="hidden">
-
-          <div class="lobby-head">
-
-            <button id="backHomeBtn" class="ghost">
-              ← Tables
+        <!-- CHAT -->
+        <div class="panel-section">
+          <div class="section-label">
+            CHAT
+          </div>
+          <div id="chatLog" class="chat-log"></div>
+          <form
+            id="chatForm"
+            class="chat-form"
+          >
+            <input
+              id="chatInput"
+              maxlength="160"
+              placeholder="Say something…"
+            >
+            <button aria-label="Send">
+              ➤
             </button>
-
-            <div>
-              <div class="eyebrow">PRIVATE TABLE</div>
-              <h2 id="lobbyTitle">Lobby</h2>
-            </div>
-
-            <div class="invite-box">
-              <span>Invite code</span>
-
-              <button id="copyCodeBtn" class="code-btn">
-                ------
-              </button>
-            </div>
-
-          </div>
-
-
-          <div class="table-layout">
-
-            <!-- TABLE FELT -->
-
-            <div class="felt">
-
-              <div class="felt-noise"></div>
-
-
-              <div class="dealer-zone">
-
-                <div class="zone-label">
-                  DEALER
-                </div>
-
-                <div id="dealerCards" class="cards"></div>
-
-                <div id="dealerMeta" class="hand-meta"></div>
-
-              </div>
-
-
-              <div id="tableStatus" class="table-status">
-                Waiting for players…
-              </div>
-
-
-              <div id="playersZone" class="players-zone"></div>
-
-            </div>
-
-
-            <!-- SIDE PANEL -->
-
-            <aside class="side-panel">
-
-
-              <!-- TABLE -->
-
-              <div class="panel-section">
-
-                <div class="section-label">
-                  TABLE
-                </div>
-
-                <div id="playerCount" class="big-number">
-                  0 / 7
-                </div>
-
-                <div id="hostLabel" class="muted">
-                  Host: —
-                </div>
-
-              </div>
-
-
-              <!-- BETTING -->
-
-              <div class="panel-section">
-
-                <div class="section-label">
-                  YOUR BET
-                </div>
-
-
-                <div class="bet-row">
-
-                  <button class="chip-btn" data-bet="5">
-                    5
-                  </button>
-
-                  <button class="chip-btn" data-bet="25">
-                    25
-                  </button>
-
-                  <button class="chip-btn" data-bet="100">
-                    100
-                  </button>
-
-                  <button class="chip-btn" data-bet="500">
-                    500
-                  </button>
-
-                </div>
-
-
-                <div class="custom-bet">
-
-                  <input
-                    id="customBet"
-                    type="number"
-                    min="5"
-                    step="5"
-                    placeholder="Custom"
-                  >
-
-                  <button id="setBetBtn" class="secondary">
-                    Set
-                  </button>
-
-                </div>
-
-
-                <div class="current-bet">
-                  Bet:
-                  <strong id="currentBet">0</strong>
-                </div>
-
-              </div>
-
-
-              <!-- GAME ACTIONS -->
-
-              <div class="panel-section action-section">
-
-                <button
-                  id="startRoundBtn"
-                  class="primary wide"
-                >
-                  Deal round
-                </button>
-
-
-                <div
-                  id="playerActions"
-                  class="action-grid hidden"
-                >
-
-                  <button id="hitBtn" class="primary">
-                    Hit
-                  </button>
-
-                  <button id="standBtn" class="secondary">
-                    Stand
-                  </button>
-
-                  <button id="doubleBtn" class="secondary">
-                    Double
-                  </button>
-
-                </div>
-
-
-                <button
-                  id="dealerActionBtn"
-                  class="dealer-action wide hidden"
-                >
-                  Run dealer
-                </button>
-
-              </div>
-
-
-              <!-- DEALER BANK -->
-
-              <div
-                id="dealerBankPanel"
-                class="panel-section hidden"
-              >
-
-                <div class="section-label">
-                  DEALER BANK
-                </div>
-
-                <div
-                  class="muted small"
-                  style="margin:5px 0 10px"
-                >
-                  Positive = dealer owes them.
-                  Negative = they owe dealer.
-                </div>
-
-
-                <select id="dealerPlayerSelect"></select>
-
-
-                <div
-                  class="custom-bet"
-                  style="margin-top:8px"
-                >
-
-                  <input
-                    id="dealerAmount"
-                    type="number"
-                    min="1"
-                    step="1"
-                    placeholder="Amount"
-                  >
-
-                </div>
-
-
-                <div class="dealer-money-grid">
-
-                  <button
-                    id="dealerGiveBtn"
-                    class="secondary"
-                  >
-                    Give money
-                  </button>
-
-                  <button
-                    id="dealerTakeBtn"
-                    class="secondary"
-                  >
-                    Take money
-                  </button>
-
-                </div>
-
-
-                <div
-                  id="dealerLedger"
-                  class="ledger"
-                ></div>
-
-              </div>
-
-
-              <!-- CHAT -->
-
-              <div class="panel-section">
-
-                <div class="section-label">
-                  CHAT
-                </div>
-
-                <div
-                  id="chatLog"
-                  class="chat-log"
-                ></div>
-
-                <form
-                  id="chatForm"
-                  class="chat-form"
-                >
-
-                  <input
-                    id="chatInput"
-                    maxlength="160"
-                    placeholder="Say something…"
-                  >
-
-                  <button aria-label="Send">
-                    ➤
-                  </button>
-
-                </form>
-
-              </div>
-
-
-              <button
-                id="leaveLobbyBtn"
-                class="danger-link"
-              >
-                Leave table
-              </button>
-
-            </aside>
-
-          </div>
-
+          </form>
         </div>
-
-      </div>
-
-    </section>
-
-  </main>
-
-
-  <!-- PROFILE MODAL -->
-
-  <div
-    id="profileModal"
-    class="modal hidden"
-  >
-
-    <div class="modal-card">
-
-      <button
-        class="modal-close"
-        data-close="profileModal"
-      >
-        ×
-      </button>
-
-      <div class="eyebrow">
-        ACCOUNT
-      </div>
-
-      <h3 id="profileName">
-        Player
-      </h3>
-
-      <p
-        id="profileEmail"
-        class="muted"
-      ></p>
-
-      <div class="profile-stat">
-        <span>Virtual chips</span>
-        <strong id="profileBalance">0</strong>
-      </div>
-
-      <button
-        id="logoutBtn"
-        class="danger wide"
-      >
-        Log out
-      </button>
-
-    </div>
-
-  </div>
-
-
-  <!-- CREATE LOBBY MODAL -->
-
-  <div
-    id="createModal"
-    class="modal hidden"
-  >
-
-    <div class="modal-card">
-
-      <button
-        class="modal-close"
-        data-close="createModal"
-      >
-        ×
-      </button>
-
-      <div class="eyebrow">
-        NEW TABLE
-      </div>
-
-      <h3>
-        Create a lobby
-      </h3>
-
-
-      <label class="field">
-
-        <span>
-          Table name
-        </span>
-
-        <input
-          id="newLobbyName"
-          maxlength="32"
-          value="Friday Night Blackjack"
+        <button
+          id="leaveLobbyBtn"
+          class="danger-link"
         >
-
-      </label>
-
-
-      <label class="field">
-
-        <span>
-          Starting chips
-        </span>
-
-        <input
-          id="newStartingChips"
-          type="number"
-          min="100"
-          step="100"
-          value="5000"
-        >
-
-      </label>
-
-
-      <button
-        id="confirmCreateLobby"
-        class="primary wide"
-      >
-        Create table
-      </button>
-
+          Leave table
+        </button>
+      </aside>
     </div>
-
   </div>
-
-
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="config.js"></script>
-  <script src="app.js"></script>
-
+</div>
+  </section>
+</main>
+<!-- PROFILE -->
+<div id="profileModal" class="modal hidden">
+  <div class="modal-card">
+<button
+  class="modal-close"
+  data-close="profileModal"
+>
+  ×
+</button>
+<div class="eyebrow">
+  ACCOUNT
+</div>
+<h3 id="profileName">
+  Player
+</h3>
+<p id="profileEmail" class="muted"></p>
+<div class="profile-stat">
+  <span>Virtual chips</span>
+  <strong id="profileBalance">0</strong>
+</div>
+<button
+  id="logoutBtn"
+  class="danger wide"
+>
+  Log out
+</button>
+  </div>
+</div>
+<!-- CREATE LOBBY -->
+<div id="createModal" class="modal hidden">
+  <div class="modal-card">
+<button
+  class="modal-close"
+  data-close="createModal"
+>
+  ×
+</button>
+<div class="eyebrow">
+  NEW TABLE
+</div>
+<h3>
+  Create a lobby
+</h3>
+<label class="field">
+  <span>Table name</span>
+  <input
+    id="newLobbyName"
+    maxlength="32"
+    value="Friday Night Blackjack"
+  >
+</label>
+<label class="field">
+  <span>Starting chips</span>
+  <input
+    id="newStartingChips"
+    type="number"
+    min="100"
+    step="100"
+    value="5000"
+  >
+</label>
+<button
+  id="confirmCreateLobby"
+  class="primary wide"
+>
+  Create table
+</button>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
