@@ -1,57 +1,67 @@
 const { createClient } = window.supabase;
 const cfg = window.APP_CONFIG || {};
-const supabase = createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
 
-const $ = (s) => document.querySelector(s);
-const $$ = (s) => [...document.querySelectorAll(s)];
+const supabase = createClient(
+  cfg.SUPABASE_URL,
+  cfg.SUPABASE_ANON_KEY
+);
+
+const $ = (selector) => document.querySelector(selector);
+const $$ = (selector) => [...document.querySelectorAll(selector)];
 
 let user = null;
 let profile = null;
-
 let currentLobby = null;
 let lobbyPlayers = [];
 let lobbyChannel = null;
-
 let game = null;
 let myBet = 0;
 
 const suits = ["♠", "♥", "♦", "♣"];
-const ranks = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
+const ranks = [
+  "A", "2", "3", "4", "5", "6", "7",
+  "8", "9", "10", "J", "Q", "K"
+];
 
-
-/* =========================================================
+/* =========================
    BASIC HELPERS
-========================================================= */
+========================= */
 
-function toast(msg) {
+function toast(message) {
   const el = $("#toast");
-  if (!el) return;
 
-  el.textContent = msg;
+  if (!el) {
+    alert(message);
+    return;
+  }
+
+  el.textContent = message;
   el.classList.add("show");
 
-  clearTimeout(toast.t);
-  toast.t = setTimeout(() => {
+  clearTimeout(toast.timer);
+
+  toast.timer = setTimeout(() => {
     el.classList.remove("show");
-  }, 2600);
+  }, 2400);
 }
 
-function esc(s) {
-  return String(s).replace(
+function esc(value) {
+  return String(value).replace(
     /[&<>"']/g,
-    c => ({
+    char => ({
       "&": "&amp;",
       "<": "&lt;",
       ">": "&gt;",
       '"': "&quot;",
       "'": "&#039;"
-    }[c])
+    })[char]
   );
 }
 
 function shuffle(array) {
   for (let i = array.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
+
     [array[i], array[j]] = [array[j], array[i]];
   }
 
@@ -64,21 +74,13 @@ function makeShoe(decks = 6) {
   for (let d = 0; d < decks; d++) {
     for (const suit of suits) {
       for (const rank of ranks) {
-        shoe.push({
-          rank,
-          suit
-        });
+        shoe.push({ rank, suit });
       }
     }
   }
 
   return shuffle(shoe);
 }
-
-
-/* =========================================================
-   BLACKJACK RULES
-========================================================= */
 
 function handValue(cards = []) {
   let total = 0;
@@ -88,7 +90,11 @@ function handValue(cards = []) {
     if (card.rank === "A") {
       total += 11;
       aces++;
-    } else if (["K", "Q", "J"].includes(card.rank)) {
+    } else if (
+      card.rank === "K" ||
+      card.rank === "Q" ||
+      card.rank === "J"
+    ) {
       total += 10;
     } else {
       total += Number(card.rank);
@@ -110,16 +116,25 @@ function isBlackjack(cards = []) {
   return cards.length === 2 && handValue(cards).total === 21;
 }
 
-function isBust(cards = []) {
-  return handValue(cards).total > 21;
+function currentGame() {
+  return JSON.parse(JSON.stringify(game || {}));
 }
 
+function nameOf(userId) {
+  return (
+    lobbyPlayers.find(p => p.user_id === userId)
+      ?.profiles
+      ?.display_name || "player"
+  );
+}
 
-/* =========================================================
-   PROFILE / ACCOUNT
-========================================================= */
+/* =========================
+   PROFILE
+========================= */
 
 async function getProfile() {
+  if (!user?.id) return false;
+
   const { data, error } = await supabase
     .from("profiles")
     .select("*")
@@ -132,17 +147,23 @@ async function getProfile() {
   }
 
   profile = data;
+
   renderBalance();
 
   return true;
 }
 
 function renderBalance() {
-  const profileBalance = Number(profile?.balance || 0);
+  const balance = Number(profile?.balance || 0);
+
+  if ($("#topBalance")) {
+    $("#topBalance").textContent =
+      balance.toLocaleString();
+  }
 
   if ($("#profileBalance")) {
     $("#profileBalance").textContent =
-      profileBalance.toLocaleString();
+      balance.toLocaleString();
   }
 
   if ($("#profileName")) {
@@ -152,88 +173,43 @@ function renderBalance() {
 
   if ($("#profileEmail")) {
     $("#profileEmail").textContent =
-      profile?.email || "";
-  }
-
-  /*
-    Outside a lobby, show the account balance.
-    Inside a lobby, show the table bankroll.
-  */
-  if ($("#topBalance")) {
-    if (currentLobby && game) {
-      $("#topBalance").textContent =
-        tableBankroll(user.id).toLocaleString();
-    } else {
-      $("#topBalance").textContent =
-        profileBalance.toLocaleString();
-    }
+      profile?.email || user?.email || "";
   }
 }
 
-
-/* =========================================================
-   TABLE BANKROLL
-========================================================= */
-
-function startingChips() {
-  return Number(currentLobby?.starting_chips || 5000);
-}
-
-function tableBankroll(id) {
-  if (!currentLobby) return 0;
-
-  if (!game) {
-    return id === user?.id ? startingChips() : 0;
-  }
-
-  if (!game.bankrolls) {
-    return id === user?.id ? startingChips() : 0;
-  }
-
-  const value = Number(game.bankrolls[id]);
-
-  if (!Number.isFinite(value)) {
-    return id === user?.id ? startingChips() : 0;
-  }
-
-  return value;
-}
-
-function ensureBankrolls(sourceGame) {
-  const g = sourceGame;
-
-  if (!g.bankrolls) {
-    g.bankrolls = {};
-  }
-
-  for (const player of lobbyPlayers) {
-    if (!Number.isFinite(Number(g.bankrolls[player.user_id]))) {
-      g.bankrolls[player.user_id] = startingChips();
-    }
-  }
-
-  return g;
-}
-
-
-/* =========================================================
-   VIEWS
-========================================================= */
+/* =========================
+   VIEW SWITCHING
+========================= */
 
 function show(view) {
-  const home = $("#homeView");
-  const lobby = $("#lobbyView");
+  $("#homeView")?.classList.toggle(
+    "hidden",
+    view !== "home"
+  );
 
-  if (!home || !lobby) return;
-
-  home.classList.toggle("hidden", view !== "home");
-  lobby.classList.toggle("hidden", view !== "lobby");
+  $("#lobbyView")?.classList.toggle(
+    "hidden",
+    view !== "lobby"
+  );
 }
 
-
-/* =========================================================
+/* =========================
    LOBBIES
-========================================================= */
+========================= */
+
+async function loadLobbies() {
+  const { data, error } = await supabase
+    .from("lobbies")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    toast(error.message);
+    return;
+  }
+
+  renderLobbies(data || []);
+}
 
 function renderLobbies(rows) {
   const list = $("#lobbyList");
@@ -257,7 +233,9 @@ function renderLobbies(rows) {
 
       <div class="lobby-meta">
         <span>♟ Private</span>
-        <span>🪙 ${Number(lobby.starting_chips || 0).toLocaleString()}</span>
+        <span>🪙 ${Number(
+          lobby.starting_chips || 5000
+        ).toLocaleString()}</span>
         <span>${esc(lobby.status || "waiting")}</span>
       </div>
 
@@ -272,25 +250,18 @@ function renderLobbies(rows) {
   `).join("");
 
   $$(".join-btn").forEach(button => {
-    button.onclick = () => joinLobby(button.dataset.id);
+    button.addEventListener("click", () => {
+      joinLobby(button.dataset.id);
+    });
   });
 }
 
-async function loadLobbies() {
-  const { data, error } = await supabase
-    .from("lobbies")
-    .select("*")
-    .order("created_at", { ascending: false });
-
-  if (error) {
-    toast(error.message);
+async function createLobby() {
+  if (!user) {
+    toast("You are not logged in.");
     return;
   }
 
-  renderLobbies(data || []);
-}
-
-async function createLobby() {
   const name =
     $("#newLobbyName")?.value.trim() ||
     "Friends Table";
@@ -298,16 +269,10 @@ async function createLobby() {
   const starting =
     Number($("#newStartingChips")?.value) || 5000;
 
-  if (starting <= 0) {
-    toast("Starting chips must be greater than 0.");
-    return;
-  }
-
-  const code =
-    Math.random()
-      .toString(36)
-      .slice(2, 8)
-      .toUpperCase();
+  const code = Math.random()
+    .toString(36)
+    .slice(2, 8)
+    .toUpperCase();
 
   const initialGame = {
     phase: "waiting",
@@ -332,7 +297,8 @@ async function createLobby() {
       invite_code: code,
       host_id: user.id,
       starting_chips: starting,
-      game: initialGame
+      game: initialGame,
+      status: "waiting"
     })
     .select()
     .single();
@@ -355,9 +321,7 @@ async function createLobby() {
     return;
   }
 
-  if ($("#createModal")) {
-    $("#createModal").classList.add("hidden");
-  }
+  $("#createModal")?.classList.add("hidden");
 
   await joinLobby(data.id);
 }
@@ -376,21 +340,26 @@ async function joinLobby(id) {
 
   const {
     data: players,
-    error: playersError
+    error: playerError
   } = await supabase
     .from("lobby_players")
     .select("*, profiles(display_name,balance,email)")
     .eq("lobby_id", id)
     .order("seat");
 
-  if (playersError) {
-    toast(playersError.message);
+  if (playerError) {
+    toast(playerError.message);
     return;
   }
 
-  if (!players.some(p => p.user_id === user.id)) {
-    const usedSeats =
-      new Set(players.map(p => p.seat));
+  const alreadyJoined = players.some(
+    player => player.user_id === user.id
+  );
+
+  if (!alreadyJoined) {
+    const usedSeats = new Set(
+      players.map(player => player.seat)
+    );
 
     let seat = 1;
 
@@ -433,20 +402,13 @@ async function joinLobby(id) {
     message: ""
   };
 
-  /*
-    Make sure everyone who joins has table chips.
-  */
   if (!game.bankrolls) {
     game.bankrolls = {};
   }
 
-  if (!Number.isFinite(Number(game.bankrolls[user.id]))) {
-    game.bankrolls[user.id] = startingChips();
-
-    await supabase
-      .from("lobbies")
-      .update({ game })
-      .eq("id", currentLobby.id);
+  if (!game.bankrolls[user.id]) {
+    game.bankrolls[user.id] =
+      Number(lobby.starting_chips || 5000);
   }
 
   await refreshLobby();
@@ -454,34 +416,24 @@ async function joinLobby(id) {
   subscribeLobby();
 
   show("lobby");
-
-  renderBalance();
 }
 
-
-/* =========================================================
+/* =========================
    LOBBY REFRESH / REALTIME
-========================================================= */
+========================= */
 
 async function refreshLobby() {
   if (!currentLobby) return;
 
-  const {
-    data: lobby,
-    error: lobbyError
-  } = await supabase
+  const { data: lobby } = await supabase
     .from("lobbies")
     .select("*")
     .eq("id", currentLobby.id)
     .single();
 
-  if (lobbyError) {
-    toast(lobbyError.message);
-    return;
-  }
-
   if (lobby) {
     currentLobby = lobby;
+
     game = lobby.game || {
       phase: "waiting",
       shoe: [],
@@ -497,56 +449,60 @@ async function refreshLobby() {
     };
   }
 
+  if (!game.bankrolls) {
+    game.bankrolls = {};
+  }
+
   const {
     data: players,
-    error: playersError
+    error
   } = await supabase
     .from("lobby_players")
     .select("*, profiles(display_name,balance,email)")
     .eq("lobby_id", currentLobby.id)
     .order("seat");
 
-  if (playersError) {
-    toast(playersError.message);
+  if (error) {
+    toast(error.message);
     return;
   }
 
   lobbyPlayers = players || [];
 
-  if ($("#lobbyTitle")) {
-    $("#lobbyTitle").textContent =
-      currentLobby.name;
+  const starting =
+    Number(currentLobby.starting_chips || 5000);
+
+  for (const player of lobbyPlayers) {
+    if (
+      game.bankrolls[player.user_id] === undefined
+    ) {
+      game.bankrolls[player.user_id] = starting;
+    }
   }
 
-  if ($("#copyCodeBtn")) {
-    $("#copyCodeBtn").textContent =
-      currentLobby.invite_code;
-  }
+  $("#lobbyTitle").textContent =
+    currentLobby.name;
 
-  if ($("#playerCount")) {
-    $("#playerCount").textContent =
-      `${lobbyPlayers.length} / 7`;
-  }
+  $("#copyCodeBtn").textContent =
+    currentLobby.invite_code;
+
+  $("#playerCount").textContent =
+    `${lobbyPlayers.length} / 7`;
 
   const host = lobbyPlayers.find(
     p => p.user_id === currentLobby.host_id
   );
 
-  if ($("#hostLabel")) {
-    $("#hostLabel").textContent =
-      `Host: ${host?.profiles?.display_name || "—"}`;
-  }
+  $("#hostLabel").textContent =
+    `Host: ${host?.profiles?.display_name || "—"}`;
 
   myBet =
     Number(game?.bets?.[user.id] || 0);
 
-  if ($("#currentBet")) {
-    $("#currentBet").textContent =
-      myBet.toLocaleString();
-  }
+  $("#currentBet").textContent =
+    myBet.toLocaleString();
 
   renderTable();
-  renderBalance();
 
   await loadChat();
 }
@@ -556,55 +512,53 @@ function subscribeLobby() {
     supabase.removeChannel(lobbyChannel);
   }
 
-  lobbyChannel =
-    supabase
-      .channel("lobby-" + currentLobby.id)
+  lobbyChannel = supabase
+    .channel(`lobby-${currentLobby.id}`)
 
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "lobbies",
-          filter: `id=eq.${currentLobby.id}`
-        },
-        refreshLobby
-      )
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "lobbies",
+        filter: `id=eq.${currentLobby.id}`
+      },
+      refreshLobby
+    )
 
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "lobby_players",
-          filter: `lobby_id=eq.${currentLobby.id}`
-        },
-        refreshLobby
-      )
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "lobby_players",
+        filter: `lobby_id=eq.${currentLobby.id}`
+      },
+      refreshLobby
+    )
 
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "chat_messages",
-          filter: `lobby_id=eq.${currentLobby.id}`
-        },
-        loadChat
-      )
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "chat_messages",
+        filter: `lobby_id=eq.${currentLobby.id}`
+      },
+      loadChat
+    )
 
-      .subscribe();
+    .subscribe();
 }
 
-
-/* =========================================================
+/* =========================
    CHAT
-========================================================= */
+========================= */
 
 async function loadChat() {
-  if (!currentLobby || !$("#chatLog")) return;
+  if (!currentLobby) return;
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("chat_messages")
     .select("*")
     .eq("lobby_id", currentLobby.id)
@@ -613,24 +567,32 @@ async function loadChat() {
     })
     .limit(80);
 
+  if (error) {
+    return;
+  }
+
   $("#chatLog").innerHTML =
     (data || [])
       .map(message => `
         <div class="chat-msg">
-          <strong>${esc(message.display_name)}</strong>
+          <strong>
+            ${esc(message.display_name)}
+          </strong>
           ${esc(message.message)}
         </div>
       `)
       .join("");
 
-  $("#chatLog").scrollTop =
-    $("#chatLog").scrollHeight;
+  const chat = $("#chatLog");
+
+  if (chat) {
+    chat.scrollTop = chat.scrollHeight;
+  }
 }
 
-
-/* =========================================================
-   CARDS / TABLE RENDERING
-========================================================= */
+/* =========================
+   CARDS
+========================= */
 
 function cardHtml(card, back = false) {
   if (back) {
@@ -650,14 +612,9 @@ function cardHtml(card, back = false) {
   `;
 }
 
-function nameOf(id) {
-  return (
-    lobbyPlayers.find(
-      player => player.user_id === id
-    )?.profiles?.display_name ||
-    "player"
-  );
-}
+/* =========================
+   TABLE RENDERING
+========================= */
 
 function renderTable() {
   if (!currentLobby || !game) return;
@@ -667,143 +624,131 @@ function renderTable() {
 
   const hideHole =
     game.phase === "playing" &&
-    dealer.length >= 2;
+    dealer.length > 1;
 
-  if ($("#dealerCards")) {
-    $("#dealerCards").innerHTML =
-      dealer
-        .map((card, index) =>
-          cardHtml(
-            card,
-            hideHole && index === 1
-          )
+  $("#dealerCards").innerHTML =
+    dealer
+      .map((card, index) =>
+        cardHtml(
+          card,
+          hideHole && index === 1
         )
-        .join("");
-  }
+      )
+      .join("");
 
-  if ($("#dealerMeta")) {
-    if (hideHole) {
-      $("#dealerMeta").textContent =
-        "Hole card hidden";
-    } else if (dealer.length) {
-      $("#dealerMeta").textContent =
-        `Total ${handValue(dealer).total}`;
-    } else {
-      $("#dealerMeta").textContent = "";
-    }
-  }
+  const dealerValue =
+    !hideHole && dealer.length
+      ? handValue(dealer).total
+      : "";
+
+  $("#dealerMeta").textContent =
+    hideHole
+      ? "Hole card hidden"
+      : dealer.length
+        ? `Total ${dealerValue}`
+        : "";
 
   const phase =
     game.phase || "waiting";
 
-  if ($("#tableStatus")) {
-    if (phase === "waiting") {
-      $("#tableStatus").textContent =
-        "Place your bets, then the host deals.";
-    } else if (phase === "playing") {
-      if (game.turn_user_id === user.id) {
-        $("#tableStatus").textContent =
-          "Your turn.";
-      } else {
-        $("#tableStatus").textContent =
-          `Waiting for ${nameOf(game.turn_user_id)}…`;
-      }
-    } else if (phase === "dealer") {
-      $("#tableStatus").textContent =
-        "Dealer is resolving the hand.";
-    } else if (phase === "finished") {
-      $("#tableStatus").textContent =
-        game.message ||
-        "Round finished.";
+  let status = "";
+
+  if (phase === "waiting") {
+    status =
+      "Set your bets, then the host deals.";
+  } else if (phase === "playing") {
+    if (game.turn_user_id === user.id) {
+      status = "Your turn.";
+    } else {
+      status =
+        `Waiting for ${nameOf(game.turn_user_id)}…`;
     }
+  } else if (phase === "dealer") {
+    status =
+      "Dealer is resolving the hand…";
+  } else if (phase === "finished") {
+    status =
+      game.message || "Round finished.";
   }
 
-  if ($("#playersZone")) {
-    $("#playersZone").innerHTML =
-      lobbyPlayers
-        .map(player => {
-          const id =
-            player.user_id;
+  $("#tableStatus").textContent = status;
 
-          const hand =
-            game.hands?.[id] || [];
+  $("#playersZone").innerHTML =
+    lobbyPlayers.map(player => {
+      const hand =
+        game.hands?.[player.user_id] || [];
 
-          const value =
-            handValue(hand);
+      const value =
+        handValue(hand);
 
-          const bet =
-            Number(game.bets?.[id] || 0);
+      const isMe =
+        player.user_id === user.id;
 
-          const result =
-            game.results?.[id];
+      const bet =
+        Number(game.bets?.[player.user_id] || 0);
 
-          const bankroll =
-            tableBankroll(id);
+      const bankroll =
+        Number(game.bankrolls?.[player.user_id] || 0);
 
-          const isMe =
-            id === user.id;
+      const result =
+        game.results?.[player.user_id];
 
-          const isDone =
-            !!game.done?.[id];
+      return `
+        <div class="seat ${isMe ? "me" : ""}">
 
-          return `
-            <div class="seat ${isMe ? "me" : ""}">
+          <div class="seat-name">
+            ${esc(
+              player.profiles?.display_name ||
+              "Player"
+            )}
+          </div>
 
-              <div class="seat-name">
-                ${esc(
-                  player.profiles?.display_name ||
-                  "Player"
-                )}
-              </div>
+          ${
+            player.user_id === currentLobby.host_id
+              ? `<div class="seat-host">HOST</div>`
+              : ""
+          }
 
-              ${
-                id === currentLobby.host_id
-                  ? `<div class="seat-host">HOST / DEALER</div>`
-                  : ""
-              }
+          <div class="seat-bet">
+            <span class="status-dot"></span>
+            Bet ${bet.toLocaleString()}
+          </div>
 
-              <div class="seat-bet">
-                <span class="status-dot"></span>
-                Bet ${bet.toLocaleString()}
-              </div>
+          <div class="cards">
+            ${hand
+              .map(card => cardHtml(card))
+              .join("")}
+          </div>
 
-              <div class="cards">
-                ${hand
-                  .map(card => cardHtml(card))
-                  .join("")}
-              </div>
+          ${
+            hand.length
+              ? `
+                <div class="hand-meta">
+                  ${value.total}
+                  ${value.soft ? " soft" : ""}
+                </div>
+              `
+              : ""
+          }
 
-              ${
-                hand.length
-                  ? `
-                    <div class="hand-meta">
-                      ${value.total}
-                      ${value.soft ? " soft" : ""}
-                      ${isDone ? " · done" : ""}
-                    </div>
-                  `
-                  : ""
-              }
+          <div class="seat-ledger">
+            🪙 ${bankroll.toLocaleString()}
+          </div>
 
-              <div class="seat-ledger">
-                🪙 ${bankroll.toLocaleString()}
-              </div>
+          ${
+            result
+              ? `
+                <div class="seat-result">
+                  ${esc(result)}
+                </div>
+              `
+              : ""
+          }
 
-              ${
-                result
-                  ? `
-                    <div class="seat-result">
-                      ${esc(result)}
-                    </div>
-                  `
-                  : ""
-              }
-
-            </div>
-          `;
-        })
-        .join("");
-  }
+        </div>
+      `;
+    })
+    .join("");
 
   const myHand =
     game.hands?.[user.id] || [];
@@ -812,305 +757,178 @@ function renderTable() {
     game.phase === "playing" &&
     game.turn_user_id === user.id;
 
-  if ($("#playerActions")) {
-    $("#playerActions")
-      .classList.toggle(
-        "hidden",
-        !myTurn
-      );
-  }
+  $("#playerActions")
+    .classList
+    .toggle("hidden", !myTurn);
 
-  if ($("#dealerActionBtn")) {
-    $("#dealerActionBtn")
-      .classList.toggle(
-        "hidden",
-        !(
-          game.phase === "dealer" &&
-          currentLobby.host_id === user.id
-        )
-      );
-  }
-
-  /*
-    Host can start a new round when waiting
-    OR reset after a finished round.
-  */
-  if ($("#startRoundBtn")) {
-    const host =
-      currentLobby.host_id === user.id;
-
-    const visible =
-      host &&
-      (
-        phase === "waiting" ||
-        phase === "finished"
-      );
-
-    $("#startRoundBtn")
-      .classList.toggle(
-        "hidden",
-        !visible
-      );
-
-    $("#startRoundBtn").textContent =
-      phase === "finished"
-        ? "New round"
-        : "Deal round";
-  }
-
-  if ($("#doubleBtn")) {
-    $("#doubleBtn").disabled =
+  $("#dealerActionBtn")
+    .classList
+    .toggle(
+      "hidden",
       !(
-        myTurn &&
-        myHand.length === 2 &&
-        tableBankroll(user.id) >= myBet
-      );
-  }
+        game.phase === "dealer" &&
+        currentLobby.host_id === user.id
+      )
+    );
+
+  $("#startRoundBtn")
+    .classList
+    .toggle(
+      "hidden",
+      !(
+        game.phase === "waiting" &&
+        currentLobby.host_id === user.id
+      )
+    );
+
+  $("#startRoundBtn").textContent =
+    game.phase === "waiting"
+      ? "Deal round"
+      : "Start round";
+
+  $("#doubleBtn").disabled =
+    !(
+      myTurn &&
+      myHand.length === 2 &&
+      Number(game.bankrolls?.[user.id] || 0) >= myBet
+    );
 
   renderDealerBank();
 }
 
-
-/* =========================================================
+/* =========================
    BETTING
-========================================================= */
+========================= */
 
 async function setBet(amount) {
-  amount = Number(amount);
+  amount = Math.floor(Number(amount));
 
-  if (!Number.isFinite(amount)) {
-    toast("Enter a valid bet.");
+  if (
+    !Number.isFinite(amount) ||
+    amount < 5 ||
+    amount % 5 !== 0
+  ) {
+    toast(
+      "Bet must be a multiple of 5."
+    );
     return;
   }
 
-  amount = Math.floor(amount);
+  if (!currentLobby || !game) return;
 
-  if (amount < 5) {
-    toast("Minimum bet is 5.");
-    return;
-  }
-
-  if (amount % 5 !== 0) {
-    toast("Bet must be a multiple of 5.");
-    return;
-  }
-
-  if (game?.phase !== "waiting") {
-    toast("You can only change your bet before the deal.");
+  if (game.phase !== "waiting") {
+    toast(
+      "Bets can only be changed before a deal."
+    );
     return;
   }
 
   const bankroll =
-    tableBankroll(user.id);
+    Number(game.bankrolls?.[user.id] || 0);
 
   if (amount > bankroll) {
-    toast("You do not have enough table chips.");
+    toast(
+      "Not enough virtual chips."
+    );
     return;
   }
 
   const g = currentGame();
 
-  g.bankrolls =
-    g.bankrolls || {};
-
-  g.bets =
-    g.bets || {};
-
-  g.bets[user.id] =
-    amount;
-
-  /*
-    Ensure the player has a table bankroll.
-  */
-  if (!Number.isFinite(
-    Number(g.bankrolls[user.id])
-  )) {
-    g.bankrolls[user.id] =
-      startingChips();
-  }
+  g.bets = {
+    ...(g.bets || {}),
+    [user.id]: amount
+  };
 
   myBet = amount;
 
   await saveGame(g);
 }
 
-
-/* =========================================================
+/* =========================
    START ROUND
-========================================================= */
+========================= */
 
 async function startRound() {
   if (!currentLobby) return;
 
   if (currentLobby.host_id !== user.id) {
-    toast("Only the dealer can deal.");
+    toast(
+      "Only the host can deal."
+    );
     return;
   }
 
-  /*
-    If previous round finished,
-    clear the previous hand but keep
-    everyone's table bankroll.
-  */
-  if (game?.phase === "finished") {
-    game = {
-      phase: "waiting",
-      shoe: [],
-      dealer: [],
-      hands: {},
-      bets: {},
-      bankrolls: {
-        ...(game.bankrolls || {})
-      },
-      done: {},
-      results: {},
-      ledger: {
-        ...(game.ledger || {})
-      },
-      turn_user_id: null,
-      message: ""
-    };
+  const active =
+    lobbyPlayers.filter(
+      player =>
+        Number(
+          game?.bets?.[player.user_id] || 0
+        ) > 0
+    );
 
-    ensureBankrolls(game);
-
-    await saveGame(game);
+  if (!active.length) {
+    toast(
+      "At least one player needs a bet."
+    );
     return;
   }
 
-  const g = currentGame();
-
-  ensureBankrolls(g);
-
-  g.bets =
-    g.bets || {};
-
-  const activePlayers =
-    lobbyPlayers.filter(player => {
-      const bet =
-        Number(g.bets[player.user_id] || 0);
-
-      const chips =
-        Number(g.bankrolls[player.user_id] || 0);
-
-      return bet > 0 && chips >= bet;
-    });
-
-  if (!activePlayers.length) {
-    toast("At least one player needs a valid bet.");
-    return;
-  }
-
-  /*
-    Validate every bet before dealing.
-  */
-  for (const player of activePlayers) {
-    const bet =
-      Number(g.bets[player.user_id]);
-
-    const chips =
-      Number(g.bankrolls[player.user_id] || 0);
-
-    if (bet < 5) {
-      toast(
-        `${nameOf(player.user_id)} has an invalid bet.`
-      );
-      return;
-    }
-
-    if (bet > chips) {
-      toast(
-        `${nameOf(player.user_id)} does not have enough chips.`
-      );
-      return;
-    }
-  }
-
-  const shoe =
-    makeShoe(6);
-
+  const shoe = makeShoe(6);
   const hands = {};
 
-  /*
-    Deal two cards to every player.
-  */
-  for (const player of activePlayers) {
+  const bets = {
+    ...(game?.bets || {})
+  };
+
+  const bankrolls = {
+    ...(game?.bankrolls || {})
+  };
+
+  const done = {};
+
+  for (const player of active) {
+    const bet =
+      Number(bets[player.user_id] || 0);
+
+    if (
+      bet <= 0 ||
+      bankrolls[player.user_id] < bet
+    ) {
+      continue;
+    }
+
     hands[player.user_id] = [
       shoe.pop(),
       shoe.pop()
     ];
+
+    bankrolls[player.user_id] -= bet;
+
+    done[player.user_id] =
+      isBlackjack(hands[player.user_id]);
   }
 
-  /*
-    Dealer gets two cards.
-  */
   const dealer = [
     shoe.pop(),
     shoe.pop()
   ];
 
-  const bets = {
-    ...g.bets
-  };
+  const playingPlayers =
+    active.filter(
+      player =>
+        hands[player.user_id]
+    );
 
-  const bankrolls = {
-    ...g.bankrolls
-  };
+  let firstTurn =
+    playingPlayers.find(
+      player => !done[player.user_id]
+    )?.user_id || null;
 
-  const done = {};
-
-  /*
-    Remove each wager from the player's
-    table bankroll.
-  */
-  for (const player of activePlayers) {
-    const id =
-      player.user_id;
-
-    const bet =
-      Number(bets[id]);
-
-    bankrolls[id] =
-      Number(bankrolls[id] || 0) - bet;
-  }
-
-  /*
-    Natural blackjacks do not need a turn.
-  */
-  for (const player of activePlayers) {
-    const id =
-      player.user_id;
-
-    const hand =
-      hands[id];
-
-    if (
-      isBlackjack(hand) ||
-      isBust(hand)
-    ) {
-      done[id] = true;
-    } else {
-      done[id] = false;
-    }
-  }
-
-  /*
-    Find first player who actually needs
-    to make a decision.
-  */
-  let firstTurn = null;
-
-  for (const player of activePlayers) {
-    if (!done[player.user_id]) {
-      firstTurn = player.user_id;
-      break;
-    }
-  }
-
-  const nextGame = {
-    phase:
-      firstTurn
-        ? "playing"
-        : "dealer",
+  const newGame = {
+    phase: firstTurn
+      ? "playing"
+      : "dealer",
 
     shoe,
     dealer,
@@ -1120,35 +938,35 @@ async function startRound() {
     done,
     results: {},
     ledger: {
-      ...(g.ledger || {})
+      ...(game?.ledger || {})
     },
-
-    turn_user_id:
-      firstTurn,
-
+    turn_user_id: firstTurn,
     message: ""
   };
 
-  await saveGame(nextGame);
+  game = newGame;
+
+  await saveGame(newGame);
+
+  if (!firstTurn) {
+    await runDealer();
+  }
 }
 
-
-/* =========================================================
+/* =========================
    PLAYER ACTIONS
-========================================================= */
+========================= */
 
 async function playerAction(type) {
-  if (!game) return;
-
   if (
+    !game ||
     game.phase !== "playing" ||
     game.turn_user_id !== user.id
   ) {
     return;
   }
 
-  const g =
-    currentGame();
+  const g = currentGame();
 
   const hand =
     g.hands[user.id] || [];
@@ -1156,34 +974,20 @@ async function playerAction(type) {
   const bet =
     Number(g.bets[user.id] || 0);
 
-  if (!bet) {
-    toast("You do not have a bet.");
-    return;
-  }
+  if (!bet) return;
 
-  /*
-    HIT
-  */
   if (type === "hit") {
-    const card =
-      g.shoe.pop();
+    const card = g.shoe.pop();
 
-    if (!card) {
-      toast("The shoe is empty.");
-      return;
-    }
-
-    g.hands[user.id] =
-      [...hand, card];
+    g.hands[user.id] = [
+      ...hand,
+      card
+    ];
 
     const value =
-      handValue(g.hands[user.id]);
+      handValue(g.hands[user.id]).total;
 
-    /*
-      Bust or 21 automatically ends
-      the player's turn.
-    */
-    if (value.total >= 21) {
+    if (value >= 21) {
       g.done[user.id] = true;
 
       g.turn_user_id =
@@ -1191,142 +995,93 @@ async function playerAction(type) {
     }
   }
 
-  /*
-    STAND
-  */
-  else if (type === "stand") {
+  if (type === "stand") {
     g.done[user.id] = true;
 
     g.turn_user_id =
       nextTurn(g, user.id);
   }
 
-  /*
-    DOUBLE DOWN
-  */
-  else if (type === "double") {
-    if (hand.length !== 2) {
-      toast("You can only double on your first two cards.");
-      return;
-    }
-
+  if (type === "double") {
     const bankroll =
       Number(g.bankrolls[user.id] || 0);
 
-    if (bankroll < bet) {
-      toast("Not enough chips to double.");
+    if (
+      hand.length !== 2 ||
+      bankroll < bet
+    ) {
+      toast(
+        "Double unavailable."
+      );
       return;
     }
 
-    /*
-      Put another equal wager down.
-    */
-    g.bankrolls[user.id] =
-      bankroll - bet;
+    g.bankrolls[user.id] -= bet;
 
     g.bets[user.id] =
       bet * 2;
 
-    const card =
-      g.shoe.pop();
+    g.hands[user.id] = [
+      ...hand,
+      g.shoe.pop()
+    ];
 
-    if (!card) {
-      toast("The shoe is empty.");
-      return;
-    }
-
-    g.hands[user.id] =
-      [...hand, card];
-
-    /*
-      Double always ends the turn.
-    */
     g.done[user.id] = true;
 
     g.turn_user_id =
       nextTurn(g, user.id);
   }
 
-  /*
-    If nobody is left to play,
-    move to dealer phase.
-  */
   if (!g.turn_user_id) {
     g.phase = "dealer";
   }
 
   await saveGame(g);
 
-  renderBalance();
+  if (g.phase === "dealer") {
+    await runDealer();
+  }
 }
 
-
-/* =========================================================
-   TURN MANAGEMENT
-========================================================= */
-
-function nextTurn(g, currentId) {
-  const players =
+function nextTurn(g, currentUserId) {
+  const ids =
     lobbyPlayers
-      .filter(player => {
-        const id =
-          player.user_id;
-
-        const bet =
-          Number(g.bets?.[id] || 0);
-
-        return (
-          bet > 0 &&
-          !g.done?.[id]
-        );
-      })
-      .map(player => player.user_id);
-
-  if (!players.length) {
-    return null;
-  }
-
-  const allPlayers =
-    lobbyPlayers.map(
-      player => player.user_id
-    );
+      .filter(
+        player =>
+          Number(
+            g.bets?.[player.user_id] || 0
+          ) > 0
+      )
+      .map(
+        player => player.user_id
+      );
 
   const currentIndex =
-    allPlayers.indexOf(currentId);
+    ids.indexOf(currentUserId);
 
-  /*
-    Continue clockwise from the current player.
-  */
   for (
-    let offset = 1;
-    offset <= allPlayers.length;
-    offset++
+    let i = currentIndex + 1;
+    i < ids.length;
+    i++
   ) {
-    const index =
-      (currentIndex + offset) %
-      allPlayers.length;
+    const id = ids[i];
 
-    const candidate =
-      allPlayers[index];
-
-    if (players.includes(candidate)) {
-      return candidate;
+    if (!g.done?.[id]) {
+      return id;
     }
   }
 
   return null;
 }
 
-
-/* =========================================================
+/* =========================
    DEALER
-========================================================= */
+========================= */
 
 async function runDealer() {
   if (!currentLobby) return;
 
   if (currentLobby.host_id !== user.id) {
-    toast("Only the dealer can resolve the hand.");
     return;
   }
 
@@ -1334,43 +1089,34 @@ async function runDealer() {
     return;
   }
 
-  const g =
-    currentGame();
+  const g = currentGame();
 
-  /*
-    Dealer stands on all 17,
-    including soft 17.
-  */
   while (
-    handValue(g.dealer).total < 17
+    handValue(g.dealer).total < 17 &&
+    g.shoe.length
   ) {
-    const card =
-      g.shoe.pop();
-
-    if (!card) break;
-
-    g.dealer.push(card);
+    g.dealer.push(
+      g.shoe.pop()
+    );
   }
 
   const dealerValue =
     handValue(g.dealer).total;
 
-  const dealerBlackjack =
-    isBlackjack(g.dealer);
-
   const results = {};
 
   for (const player of lobbyPlayers) {
-    const id =
-      player.user_id;
+    const id = player.user_id;
 
     const bet =
       Number(g.bets?.[id] || 0);
 
-    if (!bet) continue;
-
     const hand =
       g.hands?.[id] || [];
+
+    if (!bet || !hand.length) {
+      continue;
+    }
 
     const playerValue =
       handValue(hand).total;
@@ -1378,187 +1124,163 @@ async function runDealer() {
     const playerBlackjack =
       isBlackjack(hand);
 
+    const dealerBlackjack =
+      isBlackjack(g.dealer);
+
     let payout = 0;
-    let resultText = "";
+    let result = "";
 
-    /*
-      PLAYER BUST
-    */
     if (playerValue > 21) {
+      result = "Bust — lose";
       payout = 0;
-      resultText = "Bust — lose";
-    }
-
-    /*
-      BOTH NATURAL BLACKJACKS
-    */
-    else if (
+    } else if (
       playerBlackjack &&
       dealerBlackjack
     ) {
+      result = "Push";
       payout = bet;
-      resultText = "Blackjack — push";
-    }
-
-    /*
-      PLAYER NATURAL BLACKJACK
-    */
-    else if (
-      playerBlackjack &&
-      !dealerBlackjack
+    } else if (
+      playerBlackjack
     ) {
-      /*
-        Original wager is already removed.
-        Return wager + 3:2 winnings.
-      */
+      result =
+        "Blackjack — 3:2";
+
       payout =
-        bet * 2.5;
-
-      resultText =
-        "Blackjack — pays 3:2";
-    }
-
-    /*
-      DEALER NATURAL
-    */
-    else if (
-      dealerBlackjack &&
-      !playerBlackjack
+        Math.floor(
+          bet * 2.5
+        );
+    } else if (
+      dealerBlackjack
     ) {
+      result =
+        "Dealer blackjack";
       payout = 0;
-      resultText =
-        "Dealer blackjack — lose";
-    }
-
-    /*
-      DEALER BUST
-    */
-    else if (
+    } else if (
       dealerValue > 21
     ) {
+      result =
+        "Dealer bust — win";
       payout =
         bet * 2;
-
-      resultText =
-        "Win — dealer busts";
-    }
-
-    /*
-      PLAYER HIGHER
-    */
-    else if (
+    } else if (
       playerValue > dealerValue
     ) {
+      result = "Win";
       payout =
         bet * 2;
-
-      resultText =
-        "Win";
-    }
-
-    /*
-      PUSH
-    */
-    else if (
+    } else if (
       playerValue === dealerValue
     ) {
-      payout =
-        bet;
-
-      resultText =
-        "Push";
-    }
-
-    /*
-      DEALER HIGHER
-    */
-    else {
-      payout = 0;
-      resultText =
+      result = "Push";
+      payout = bet;
+    } else {
+      result =
         "Dealer wins";
+      payout = 0;
     }
 
-    /*
-      Return winnings/pushes to the
-      player's table bankroll.
-    */
-    g.bankrolls[id] =
-      Number(g.bankrolls[id] || 0) +
-      payout;
+    results[id] = result;
 
-    results[id] =
-      resultText;
+    if (payout > 0) {
+      g.bankrolls[id] =
+        Number(
+          g.bankrolls[id] || 0
+        ) + payout;
+    }
   }
 
-  g.results =
-    results;
-
-  g.phase =
-    "finished";
-
-  g.turn_user_id =
-    null;
+  g.results = results;
+  g.phase = "finished";
+  g.turn_user_id = null;
 
   g.message =
-    `Dealer: ${dealerValue}.`;
+    `Dealer: ${dealerValue}. ` +
+    `Start a new round when ready.`;
 
   await saveGame(g);
-
-  renderBalance();
 }
 
-
-/* =========================================================
+/* =========================
    NEW ROUND
-========================================================= */
+========================= */
 
 async function resetRound() {
-  if (!currentLobby) return;
-
-  if (currentLobby.host_id !== user.id) {
-    toast("Only the dealer can start a new round.");
+  if (
+    !currentLobby ||
+    currentLobby.host_id !== user.id
+  ) {
     return;
   }
 
-  const g = {
+  const bankrolls = {
+    ...(game?.bankrolls || {})
+  };
+
+  const newGame = {
     phase: "waiting",
-
     shoe: [],
-
     dealer: [],
-
     hands: {},
-
     bets: {},
-
-    bankrolls: {
-      ...(game?.bankrolls || {})
-    },
-
+    bankrolls,
     done: {},
-
     results: {},
-
     ledger: {
       ...(game?.ledger || {})
     },
-
     turn_user_id: null,
-
     message: ""
   };
 
-  ensureBankrolls(g);
-
-  await saveGame(g);
-
-  renderBalance();
+  await saveGame(newGame);
 }
 
+/* =========================
+   SAVE GAME
+========================= */
 
-/* =========================================================
+async function saveGame(nextGame) {
+  if (!currentLobby) return;
+
+  game = nextGame;
+
+  let status = "waiting";
+
+  if (game.phase === "finished") {
+    status = "finished";
+  } else if (
+    game.phase === "playing" ||
+    game.phase === "dealer"
+  ) {
+    status = "playing";
+  }
+
+  const {
+    error
+  } = await supabase
+    .from("lobbies")
+    .update({
+      game,
+      status
+    })
+    .eq(
+      "id",
+      currentLobby.id
+    );
+
+  if (error) {
+    toast(
+      `Game save failed: ${error.message}`
+    );
+    return;
+  }
+
+  renderTable();
+}
+
+/* =========================
    DEALER BANK / LEDGER
-========================================================= */
+========================= */
 
 function ledgerValue(id) {
   return Number(
@@ -1566,46 +1288,19 @@ function ledgerValue(id) {
   );
 }
 
-function ledgerLabel(id) {
-  const value =
-    ledgerValue(id);
-
-  if (value > 0) {
-    return `
-      <span class="up">
-        Dealer owes ${value.toLocaleString()}
-      </span>
-    `;
-  }
-
-  if (value < 0) {
-    return `
-      <span class="down">
-        Owes dealer ${Math.abs(value).toLocaleString()}
-      </span>
-    `;
-  }
-
-  return `<span>Settled</span>`;
-}
-
 function renderDealerBank() {
-  if (
-    !currentLobby ||
-    !game ||
-    !$("#dealerBankPanel")
-  ) {
-    return;
-  }
+  const panel =
+    $("#dealerBankPanel");
+
+  if (!panel) return;
 
   const isDealer =
-    currentLobby.host_id === user.id;
+    currentLobby?.host_id === user.id;
 
-  $("#dealerBankPanel")
-    .classList.toggle(
-      "hidden",
-      !isDealer
-    );
+  panel.classList.toggle(
+    "hidden",
+    !isDealer
+  );
 
   if (!isDealer) return;
 
@@ -1623,16 +1318,14 @@ function renderDealerBank() {
         player =>
           player.user_id !== user.id
       )
-      .map(
-        player => `
-          <option value="${player.user_id}">
-            ${esc(
-              player.profiles?.display_name ||
-              "Player"
-            )}
-          </option>
-        `
-      )
+      .map(player => `
+        <option value="${player.user_id}">
+          ${esc(
+            player.profiles?.display_name ||
+            "Player"
+          )}
+        </option>
+      `)
       .join("");
 
   if (
@@ -1642,65 +1335,63 @@ function renderDealerBank() {
           option.value === previous
       )
   ) {
-    select.value =
-      previous;
+    select.value = previous;
   }
 
-  if ($("#dealerLedger")) {
-    $("#dealerLedger").innerHTML =
-      lobbyPlayers
-        .filter(
-          player =>
-            player.user_id !== user.id
-        )
-        .map(player => {
-          const value =
-            ledgerValue(
-              player.user_id
-            );
+  $("#dealerLedger").innerHTML =
+    lobbyPlayers
+      .filter(
+        player =>
+          player.user_id !== user.id
+      )
+      .map(player => {
+        const amount =
+          ledgerValue(
+            player.user_id
+          );
 
-          const className =
-            value > 0
-              ? "up"
-              : value < 0
-                ? "down"
-                : "even";
+        const className =
+          amount > 0
+            ? "up"
+            : amount < 0
+              ? "down"
+              : "even";
 
-          const text =
-            value > 0
-              ? `+${value.toLocaleString()} (dealer owes)`
-              : value < 0
-                ? `-${Math.abs(value).toLocaleString()} (owes dealer)`
-                : "0 (settled)";
+        const text =
+          amount > 0
+            ? `+${amount.toLocaleString()} (dealer owes)`
+            : amount < 0
+              ? `-${Math.abs(amount).toLocaleString()} (owes dealer)`
+              : "0 (settled)";
 
-          return `
-            <div class="ledger-row">
-              <span>
-                ${esc(
-                  player.profiles?.display_name ||
-                  "Player"
-                )}
-              </span>
+        return `
+          <div class="ledger-row">
+            <span>
+              ${esc(
+                player.profiles?.display_name ||
+                "Player"
+              )}
+            </span>
 
-              <strong class="${className}">
-                ${text}
-              </strong>
-            </div>
-          `;
-        })
-        .join("") ||
-      `<div class="muted small">
-        No other players yet.
-      </div>`;
-  }
+            <strong class="${className}">
+              ${text}
+            </strong>
+          </div>
+        `;
+      })
+      .join("") ||
+    `<div class="muted small">
+      No other players yet.
+    </div>`;
 }
 
 async function dealerAdjust(direction) {
   if (
-    !currentLobby ||
-    currentLobby.host_id !== user.id
+    currentLobby?.host_id !== user.id
   ) {
-    toast("Only the dealer can change the ledger.");
+    toast(
+      "Only the dealer can change the ledger."
+    );
     return;
   }
 
@@ -1715,7 +1406,9 @@ async function dealerAdjust(direction) {
     );
 
   if (!target) {
-    toast("Choose a player.");
+    toast(
+      "Choose a player."
+    );
     return;
   }
 
@@ -1723,21 +1416,20 @@ async function dealerAdjust(direction) {
     !Number.isFinite(amount) ||
     amount <= 0
   ) {
-    toast("Enter a positive amount.");
+    toast(
+      "Enter a positive amount."
+    );
     return;
   }
 
-  const g =
-    currentGame();
+  const g = currentGame();
 
-  g.ledger =
-    g.ledger || {};
-
-  const oldValue =
-    Number(g.ledger[target] || 0);
+  g.ledger = {
+    ...(g.ledger || {})
+  };
 
   g.ledger[target] =
-    oldValue +
+    Number(g.ledger[target] || 0) +
     (
       direction === "give"
         ? amount
@@ -1746,61 +1438,12 @@ async function dealerAdjust(direction) {
 
   await saveGame(g);
 
-  if ($("#dealerAmount")) {
-    $("#dealerAmount").value = "";
-  }
+  $("#dealerAmount").value = "";
 }
 
-
-/* =========================================================
-   SAVE GAME
-========================================================= */
-
-function currentGame() {
-  return JSON.parse(
-    JSON.stringify(
-      game || {}
-    )
-  );
-}
-
-async function saveGame(next) {
-  if (!currentLobby) return;
-
-  game = next;
-
-  const status =
-    game.phase === "waiting"
-      ? "waiting"
-      : game.phase === "finished"
-        ? "finished"
-        : "playing";
-
-  const { error } =
-    await supabase
-      .from("lobbies")
-      .update({
-        game,
-        status
-      })
-      .eq(
-        "id",
-        currentLobby.id
-      );
-
-  if (error) {
-    toast(error.message);
-    return;
-  }
-
-  renderTable();
-  renderBalance();
-}
-
-
-/* =========================================================
-   LEAVE LOBBY
-========================================================= */
+/* =========================
+   LEAVE TABLE
+========================= */
 
 async function leaveLobby() {
   if (!currentLobby) return;
@@ -1826,180 +1469,75 @@ async function leaveLobby() {
   }
 
   currentLobby = null;
-  game = null;
   lobbyPlayers = [];
+  game = null;
+  myBet = 0;
 
   show("home");
 
   await loadLobbies();
-
-  renderBalance();
 }
 
-
-/* =========================================================
-   LOGOUT
-========================================================= */
-
-async function logout() {
-  await supabase.auth.signOut();
-}
-
-
-/* =========================================================
-   AUTH / PAGE STARTUP
-========================================================= */
-
-async function boot() {
-  if (!supabase) {
-    toast(
-      "Supabase configuration is missing."
-    );
-    return;
-  }
-
-  const {
-    data
-  } = await supabase.auth.getSession();
-
-  if (data.session) {
-    user =
-      data.session.user;
-
-    await getProfile();
-
-    /*
-      If this is game.html, load the game.
-    */
-    if (
-      window.location.pathname.endsWith(
-        "/game.html"
-      )
-    ) {
-      await enterGame();
-    }
-  } else {
-    /*
-      If game.html is opened without a session,
-      send the user back to login.
-    */
-    if (
-      window.location.pathname.endsWith(
-        "/game.html"
-      )
-    ) {
-      window.location.replace(
-        "index.html"
-      );
-    }
-  }
-
-  supabase.auth.onAuthStateChange(
-    async (_event, session) => {
-      user =
-        session?.user || null;
-
-      if (!user) {
-        window.location.replace(
-          "index.html"
-        );
-        return;
-      }
-
-      await getProfile();
-
-      if (
-        window.location.pathname.endsWith(
-          "/game.html"
-        )
-      ) {
-        await enterGame();
-      } else {
-        window.location.replace(
-          "game.html"
-        );
-      }
-    }
-  );
-}
-
-async function enterGame() {
-  if (!user) return;
-
-  if ($("#appView")) {
-    $("#appView")
-      .classList.remove("hidden");
-  }
-
-  if ($("#authView")) {
-    $("#authView")
-      .classList.add("hidden");
-  }
-
-  renderBalance();
-
-  await loadLobbies();
-}
-
-
-/* =========================================================
-   BUTTONS / EVENTS
-========================================================= */
+/* =========================
+   BUTTONS
+========================= */
 
 function initializeButtons() {
+  console.log(
+    "Blackjack Friends: initializing buttons"
+  );
 
-  /*
-    Home
-  */
+  const createLobbyBtn =
+    $("#createLobbyBtn");
 
-  if ($("#createLobbyBtn")) {
-    $("#createLobbyBtn").onclick =
-      () => {
-        $("#createModal")
-          ?.classList
-          .remove("hidden");
-      };
+  if (createLobbyBtn) {
+    createLobbyBtn.onclick = () => {
+      $("#createModal")
+        ?.classList
+        .remove("hidden");
+    };
   }
 
-  if ($("#confirmCreateLobby")) {
-    $("#confirmCreateLobby").onclick =
+  const confirmCreateLobby =
+    $("#confirmCreateLobby");
+
+  if (confirmCreateLobby) {
+    confirmCreateLobby.onclick =
       createLobby;
   }
 
-  if ($("#backHomeBtn")) {
-    $("#backHomeBtn").onclick =
-      async () => {
-        if (lobbyChannel) {
-          supabase.removeChannel(
-            lobbyChannel
-          );
-          lobbyChannel = null;
-        }
+  const backHomeBtn =
+    $("#backHomeBtn");
 
-        currentLobby = null;
-        game = null;
-        lobbyPlayers = [];
+  if (backHomeBtn) {
+    backHomeBtn.onclick = async () => {
+      if (lobbyChannel) {
+        supabase.removeChannel(
+          lobbyChannel
+        );
 
-        show("home");
+        lobbyChannel = null;
+      }
 
-        await loadLobbies();
+      currentLobby = null;
+      lobbyPlayers = [];
+      game = null;
 
-        renderBalance();
-      };
+      show("home");
+
+      await loadLobbies();
+    };
   }
 
+  const profileBtn =
+    $("#profileBtn");
 
-  /*
-    Profile
-  */
-
-  if ($("#profileBtn")) {
-    $("#profileBtn").onclick =
-      () => {
-        $("#profileModal")
-          ?.classList
-          .remove("hidden");
-      };
+  if (profileBtn) {
+    profileBtn.onclick = () => {
+      $("#profileModal")
+        ?.classList
+        .remove("hidden");
+    };
   }
 
   $$("[data-close]").forEach(button => {
@@ -2007,26 +1545,28 @@ function initializeButtons() {
       const target =
         button.dataset.close;
 
-      if (target) {
-        $("#" + target)
-          ?.classList
-          .add("hidden");
-      }
+      $(`#${target}`)
+        ?.classList
+        .add("hidden");
     };
   });
 
-  if ($("#logoutBtn")) {
-    $("#logoutBtn").onclick =
-      logout;
+  const logoutBtn =
+    $("#logoutBtn");
+
+  if (logoutBtn) {
+    logoutBtn.onclick = async () => {
+      await supabase.auth.signOut();
+      window.location.href =
+        "index.html";
+    };
   }
 
+  const copyCodeBtn =
+    $("#copyCodeBtn");
 
-  /*
-    Invite code
-  */
-
-  if ($("#copyCodeBtn")) {
-    $("#copyCodeBtn").onclick =
+  if (copyCodeBtn) {
+    copyCodeBtn.onclick =
       async () => {
         if (!currentLobby) return;
 
@@ -2046,45 +1586,34 @@ function initializeButtons() {
       };
   }
 
-
-  /*
-    Betting
-  */
-
   $$(".chip-btn").forEach(button => {
-    button.onclick =
-      () => {
-        setBet(
-          Number(
-            button.dataset.bet
-          )
-        );
-      };
+    button.onclick = () => {
+      setBet(
+        Number(button.dataset.bet)
+      );
+    };
   });
 
-  if ($("#setBetBtn")) {
-    $("#setBetBtn").onclick =
-      () => {
-        setBet(
-          Number(
-            $("#customBet").value
-          )
-        );
-      };
+  const setBetBtn =
+    $("#setBetBtn");
+
+  if (setBetBtn) {
+    setBetBtn.onclick = () => {
+      setBet(
+        Number(
+          $("#customBet")?.value
+        )
+      );
+    };
   }
 
+  const startRoundBtn =
+    $("#startRoundBtn");
 
-  /*
-    Deal / new round
-  */
-
-  if ($("#startRoundBtn")) {
-    $("#startRoundBtn").onclick =
+  if (startRoundBtn) {
+    startRoundBtn.onclick =
       async () => {
-        if (
-          game?.phase ===
-          "finished"
-        ) {
+        if (game?.phase === "finished") {
           await resetRound();
         } else {
           await startRound();
@@ -2092,77 +1621,77 @@ function initializeButtons() {
       };
   }
 
+  const hitBtn =
+    $("#hitBtn");
 
-  /*
-    Player actions
-  */
-
-  if ($("#hitBtn")) {
-    $("#hitBtn").onclick =
+  if (hitBtn) {
+    hitBtn.onclick =
       () => playerAction("hit");
   }
 
-  if ($("#standBtn")) {
-    $("#standBtn").onclick =
+  const standBtn =
+    $("#standBtn");
+
+  if (standBtn) {
+    standBtn.onclick =
       () => playerAction("stand");
   }
 
-  if ($("#doubleBtn")) {
-    $("#doubleBtn").onclick =
+  const doubleBtn =
+    $("#doubleBtn");
+
+  if (doubleBtn) {
+    doubleBtn.onclick =
       () => playerAction("double");
   }
 
+  const dealerActionBtn =
+    $("#dealerActionBtn");
 
-  /*
-    Dealer
-  */
-
-  if ($("#dealerActionBtn")) {
-    $("#dealerActionBtn").onclick =
+  if (dealerActionBtn) {
+    dealerActionBtn.onclick =
       runDealer;
   }
 
-  if ($("#dealerGiveBtn")) {
-    $("#dealerGiveBtn").onclick =
-      () =>
-        dealerAdjust("give");
+  const dealerGiveBtn =
+    $("#dealerGiveBtn");
+
+  if (dealerGiveBtn) {
+    dealerGiveBtn.onclick =
+      () => dealerAdjust("give");
   }
 
-  if ($("#dealerTakeBtn")) {
-    $("#dealerTakeBtn").onclick =
-      () =>
-        dealerAdjust("take");
+  const dealerTakeBtn =
+    $("#dealerTakeBtn");
+
+  if (dealerTakeBtn) {
+    dealerTakeBtn.onclick =
+      () => dealerAdjust("take");
   }
 
+  const leaveLobbyBtn =
+    $("#leaveLobbyBtn");
 
-  /*
-    Leave
-  */
-
-  if ($("#leaveLobbyBtn")) {
-    $("#leaveLobbyBtn").onclick =
+  if (leaveLobbyBtn) {
+    leaveLobbyBtn.onclick =
       leaveLobby;
   }
 
+  const chatForm =
+    $("#chatForm");
 
-  /*
-    Chat
-  */
-
-  if ($("#chatForm")) {
-    $("#chatForm").onsubmit =
+  if (chatForm) {
+    chatForm.onsubmit =
       async event => {
         event.preventDefault();
 
-        if (!currentLobby || !user) {
-          return;
-        }
+        if (!currentLobby) return;
 
         const input =
           $("#chatInput");
 
         const message =
-          input?.value.trim();
+          input.value.trim();
 
         if (!message) return;
 
@@ -2190,14 +1719,78 @@ function initializeButtons() {
         }
 
         input.value = "";
+
+        await loadChat();
       };
   }
 }
 
+/* =========================
+   BOOT
+========================= */
 
-/* =========================================================
+async function boot() {
+  try {
+    if (
+      !cfg.SUPABASE_URL ||
+      !cfg.SUPABASE_ANON_KEY
+    ) {
+      toast(
+        "Supabase configuration is missing."
+      );
+      return;
+    }
+
+    const {
+      data,
+      error
+    } = await supabase.auth.getSession();
+
+    if (error) {
+      toast(error.message);
+      return;
+    }
+
+    if (!data.session) {
+      window.location.href =
+        "index.html";
+      return;
+    }
+
+    user = data.session.user;
+
+    const profileLoaded =
+      await getProfile();
+
+    if (!profileLoaded) {
+      return;
+    }
+
+    renderBalance();
+
+    show("home");
+
+    await loadLobbies();
+
+    console.log(
+      "Blackjack Friends loaded successfully."
+    );
+
+  } catch (error) {
+    console.error(
+      "Blackjack Friends boot error:",
+      error
+    );
+
+    toast(
+      `Game error: ${error.message}`
+    );
+  }
+}
+
+/* =========================
    START
-========================================================= */
+========================= */
 
 initializeButtons();
 boot();
