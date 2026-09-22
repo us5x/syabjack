@@ -7,13 +7,11 @@ const $$ = (s) => [...document.querySelectorAll(s)];
 
 let user = null;
 let profile = null;
-let authMode = "login";
 let currentLobby = null;
 let lobbyPlayers = [];
 let lobbyChannel = null;
 let game = null;
 let myBet = 0;
-let chatChannel = null;
 
 const suits = ["♠","♥","♦","♣"];
 const ranks = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
@@ -37,10 +35,6 @@ function esc(s){
   }[c]));
 }
 
-function uid(){
-  return crypto.randomUUID();
-}
-
 function shuffle(a){
   for(let i=a.length-1;i>0;i--){
     const j=Math.floor(Math.random()*(i+1));
@@ -51,15 +45,19 @@ function shuffle(a){
 
 function makeShoe(decks=6){
   const shoe=[];
-  for(let d=0;d<decks;d++)
-    for(const suit of suits)
-      for(const rank of ranks)
+  for(let d=0;d<decks;d++){
+    for(const suit of suits){
+      for(const rank of ranks){
         shoe.push({rank,suit});
+      }
+    }
+  }
   return shuffle(shoe);
 }
 
 function handValue(cards=[]){
-  let total=0, aces=0;
+  let total=0;
+  let aces=0;
 
   for(const c of cards){
     if(c.rank==="A"){
@@ -68,7 +66,7 @@ function handValue(cards=[]){
     }else if(["K","Q","J"].includes(c.rank)){
       total+=10;
     }else{
-      total+=+c.rank;
+      total+=Number(c.rank);
     }
   }
 
@@ -77,11 +75,57 @@ function handValue(cards=[]){
     aces--;
   }
 
-  return {total,soft:aces>0};
+  return {
+    total,
+    soft:aces>0
+  };
 }
 
 function isBlackjack(cards){
   return cards.length===2 && handValue(cards).total===21;
+}
+
+
+/* =========================
+   AUTH / PAGE FLOW
+========================= */
+
+async function authSubmit(e){
+  e.preventDefault();
+
+  const email=$("#email")?.value.trim();
+  const password=$("#password")?.value;
+
+  if(!email || !password){
+    toast("Enter your email and password.");
+    return;
+  }
+
+  const button=$("#authSubmit");
+
+  if(button){
+    button.disabled=true;
+    button.textContent="Logging in…";
+  }
+
+  const {data,error}=await supabase.auth.signInWithPassword({
+    email,
+    password
+  });
+
+  if(button){
+    button.disabled=false;
+    button.textContent="Log in";
+  }
+
+  if(error){
+    toast(error.message);
+    return;
+  }
+
+  if(data.session){
+    window.location.href="game.html";
+  }
 }
 
 async function getProfile(){
@@ -117,6 +161,54 @@ function renderBalance(){
     $("#profileEmail").textContent=profile?.email||"";
 }
 
+async function boot(){
+  const {data}=await supabase.auth.getSession();
+
+  const onGamePage=window.location.pathname.endsWith("/game.html");
+
+  if(data.session){
+    user=data.session.user;
+
+    if(onGamePage){
+      if(await getProfile()){
+        enterGame();
+      }
+    }else{
+      window.location.href="game.html";
+    }
+
+  }else{
+    if(onGamePage){
+      window.location.href="index.html";
+    }
+  }
+
+  supabase.auth.onAuthStateChange(async(_,session)=>{
+    user=session?.user||null;
+
+    if(session?.user){
+      if(window.location.pathname.endsWith("/game.html")){
+        if(await getProfile()){
+          enterGame();
+        }
+      }else{
+        window.location.href="game.html";
+      }
+    }else{
+      window.location.href="index.html";
+    }
+  });
+}
+
+function enterGame(){
+  loadLobbies();
+}
+
+
+/* =========================
+   HOME / LOBBIES
+========================= */
+
 function show(view){
   if($("#homeView"))
     $("#homeView").classList.toggle("hidden",view!=="home");
@@ -145,8 +237,8 @@ function renderLobbies(rows){
       <h4>${esc(l.name)}</h4>
       <div class="lobby-meta">
         <span>♟ Private</span>
-        <span>🪙 ${l.starting_chips.toLocaleString()}</span>
-        <span>${l.status}</span>
+        <span>🪙 ${Number(l.starting_chips).toLocaleString()}</span>
+        <span>${esc(l.status)}</span>
       </div>
       <button class="secondary join-btn" data-id="${l.id}">
         Join table
@@ -174,8 +266,8 @@ async function loadLobbies(){
 }
 
 async function createLobby(){
-  const name=$("#newLobbyName").value.trim()||"Friends Table";
-  const starting=Number($("#newStartingChips").value)||5000;
+  const name=$("#newLobbyName")?.value.trim()||"Friends Table";
+  const starting=Number($("#newStartingChips")?.value)||5000;
   const code=Math.random().toString(36).slice(2,8).toUpperCase();
 
   const {data,error}=await supabase
@@ -185,7 +277,10 @@ async function createLobby(){
       invite_code:code,
       host_id:user.id,
       starting_chips:starting,
-      game:{phase:"waiting"}
+      game:{
+        phase:"waiting",
+        ledger:{}
+      }
     })
     .select()
     .single();
@@ -195,7 +290,7 @@ async function createLobby(){
     return;
   }
 
-  await supabase
+  const {error:playerError}=await supabase
     .from("lobby_players")
     .insert({
       lobby_id:data.id,
@@ -203,7 +298,13 @@ async function createLobby(){
       seat:1
     });
 
-  $("#createModal").classList.add("hidden");
+  if(playerError){
+    toast(playerError.message);
+    return;
+  }
+
+  $("#createModal")?.classList.add("hidden");
+
   await joinLobby(data.id);
 }
 
@@ -256,7 +357,10 @@ async function joinLobby(id){
   }
 
   currentLobby=lobby;
-  game=lobby.game||{phase:"waiting"};
+  game=lobby.game||{
+    phase:"waiting",
+    ledger:{}
+  };
 
   await refreshLobby();
   subscribeLobby();
@@ -266,15 +370,20 @@ async function joinLobby(id){
 async function refreshLobby(){
   if(!currentLobby) return;
 
-  const {data:lobby}=await supabase
+  const {data:lobby,error}=await supabase
     .from("lobbies")
     .select("*")
     .eq("id",currentLobby.id)
     .single();
 
+  if(error) return;
+
   if(lobby){
     currentLobby=lobby;
-    game=lobby.game||{phase:"waiting"};
+    game=lobby.game||{
+      phase:"waiting",
+      ledger:{}
+    };
   }
 
   const {data:players}=await supabase
@@ -285,19 +394,28 @@ async function refreshLobby(){
 
   lobbyPlayers=players||[];
 
-  $("#lobbyTitle").textContent=currentLobby.name;
-  $("#copyCodeBtn").textContent=currentLobby.invite_code;
-  $("#playerCount").textContent=`${lobbyPlayers.length} / 7`;
+  if($("#lobbyTitle"))
+    $("#lobbyTitle").textContent=currentLobby.name;
+
+  if($("#copyCodeBtn"))
+    $("#copyCodeBtn").textContent=currentLobby.invite_code;
+
+  if($("#playerCount"))
+    $("#playerCount").textContent=`${lobbyPlayers.length} / 7`;
 
   const host=lobbyPlayers.find(
     p=>p.user_id===currentLobby.host_id
   );
 
-  $("#hostLabel").textContent=
-    `Host: ${host?.profiles?.display_name||"—"}`;
+  if($("#hostLabel")){
+    $("#hostLabel").textContent=
+      `Host: ${host?.profiles?.display_name||"—"}`;
+  }
 
-  myBet=(game?.bets?.[user.id])||0;
-  $("#currentBet").textContent=myBet.toLocaleString();
+  myBet=game?.bets?.[user.id]||0;
+
+  if($("#currentBet"))
+    $("#currentBet").textContent=myBet.toLocaleString();
 
   renderTable();
   await loadChat();
@@ -346,8 +464,13 @@ function subscribeLobby(){
     .subscribe();
 }
 
+
+/* =========================
+   CHAT
+========================= */
+
 async function loadChat(){
-  if(!currentLobby) return;
+  if(!currentLobby || !$("#chatLog")) return;
 
   const {data}=await supabase
     .from("chat_messages")
@@ -366,8 +489,15 @@ async function loadChat(){
     .join("");
 
   const el=$("#chatLog");
-  el.scrollTop=el.scrollHeight;
+
+  if(el)
+    el.scrollTop=el.scrollHeight;
 }
+
+
+/* =========================
+   CARDS / TABLE
+========================= */
 
 function cardHtml(c,back=false){
   if(back)
@@ -384,129 +514,159 @@ function cardHtml(c,back=false){
   `;
 }
 
-function renderTable(){
-  const dealer=game?.dealer||[];
-  const hideHole=
-    game?.phase==="playing" &&
-    dealer.length>1;
-
-  $("#dealerCards").innerHTML=
-    dealer.map((c,i)=>
-      cardHtml(c,hideHole&&i===1)
-    ).join("");
-
-  const dv=(!hideHole&&dealer.length)
-    ?handValue(dealer).total
-    :"";
-
-  $("#dealerMeta").textContent=
-    hideHole
-      ?"Hole card hidden"
-      :(dealer.length?`Total ${dv}`:"");
-
-  const phase=game?.phase||"waiting";
-
-  $("#tableStatus").textContent=
-    phase==="waiting"
-      ?"Set your bets, then the host deals."
-      :phase==="playing"
-        ?(
-          game.turn_user_id===user.id
-            ?"Your turn."
-            :"Waiting for "+nameOf(game.turn_user_id)+"…"
-        )
-        :phase==="dealer"
-          ?"Dealer is resolving the hand…"
-          :phase==="finished"
-            ?(game.message||"Round finished.")
-            :"";
-
-  $("#playersZone").innerHTML=lobbyPlayers.map(p=>{
-    const hand=game?.hands?.[p.user_id]||[];
-    const value=handValue(hand);
-    const isMe=p.user_id===user.id;
-    const bet=game?.bets?.[p.user_id]||0;
-    const result=game?.results?.[p.user_id];
-
-    return `
-      <div class="seat ${isMe?"me":""}">
-        <div class="seat-name">
-          ${esc(p.profiles?.display_name||"Player")}
-        </div>
-
-        ${p.user_id===currentLobby.host_id
-          ?'<div class="seat-host">HOST</div>'
-          :""
-        }
-
-        <div class="seat-bet">
-          <span class="status-dot"></span>
-          Bet ${bet.toLocaleString()}
-        </div>
-
-        <div class="cards">
-          ${hand.map(c=>cardHtml(c)).join("")}
-        </div>
-
-        ${hand.length
-          ?`<div class="hand-meta">
-              ${value.total}${value.soft?" soft":""}
-            </div>`
-          :""
-        }
-
-        ${result
-          ?`<div class="seat-result">${esc(result)}</div>`
-          :""
-        }
-      </div>
-    `;
-  }).join("");
-
-  const myHand=game?.hands?.[user.id]||[];
-
-  const myTurn=
-    game?.phase==="playing" &&
-    game?.turn_user_id===user.id;
-
-  $("#playerActions").classList.toggle(
-    "hidden",
-    !myTurn
-  );
-
-  $("#dealerActionBtn").classList.toggle(
-    "hidden",
-    !(
-      game?.phase==="dealer" &&
-      currentLobby.host_id===user.id
-    )
-  );
-
-  $("#startRoundBtn").classList.toggle(
-    "hidden",
-    !(
-      phase==="waiting" &&
-      currentLobby.host_id===user.id
-    )
-  );
-
-  $("#startRoundBtn").textContent=
-    phase==="waiting"?"Deal round":"";
-
-  $("#doubleBtn").disabled=
-    !(
-      myHand.length===2 &&
-      (profile?.balance||0)>=myBet
-    );
-
-  renderDealerBank();
-}
-
 function nameOf(id){
   return lobbyPlayers.find(
     p=>p.user_id===id
   )?.profiles?.display_name||"player";
 }
+
+function renderTable(){
+  if(!currentLobby || !game) return;
+
+  const dealer=game.dealer||[];
+
+  const hideHole=
+    game.phase==="playing" &&
+    dealer.length>1;
+
+  if($("#dealerCards")){
+    $("#dealerCards").innerHTML=
+      dealer.map((c,i)=>
+        cardHtml(c,hideHole&&i===1)
+      ).join("");
+  }
+
+  const dv=(!hideHole&&dealer.length)
+    ?handValue(dealer).total
+    :"";
+
+  if($("#dealerMeta")){
+    $("#dealerMeta").textContent=
+      hideHole
+        ?"Hole card hidden"
+        :(dealer.length?`Total ${dv}`:"");
+  }
+
+  const phase=game.phase||"waiting";
+
+  if($("#tableStatus")){
+    $("#tableStatus").textContent=
+      phase==="waiting"
+        ?"Set your bets, then the host deals."
+        :phase==="playing"
+          ?(
+            game.turn_user_id===user.id
+              ?"Your turn."
+              :"Waiting for "+nameOf(game.turn_user_id)+"…"
+          )
+          :phase==="dealer"
+            ?"Dealer is resolving the hand…"
+            :phase==="finished"
+              ?(game.message||"Round finished.")
+              :"";
+  }
+
+  if($("#playersZone")){
+    $("#playersZone").innerHTML=lobbyPlayers.map(p=>{
+      const hand=game.hands?.[p.user_id]||[];
+      const value=handValue(hand);
+      const isMe=p.user_id===user.id;
+      const bet=game.bets?.[p.user_id]||0;
+      const result=game.results?.[p.user_id];
+
+      return `
+        <div class="seat ${isMe?"me":""}">
+          <div class="seat-name">
+            ${esc(p.profiles?.display_name||"Player")}
+          </div>
+
+          ${p.user_id===currentLobby.host_id
+            ?'<div class="seat-host">HOST</div>'
+            :""
+          }
+
+          <div class="seat-bet">
+            <span class="status-dot"></span>
+            Bet ${Number(bet).toLocaleString()}
+          </div>
+
+          <div class="cards">
+            ${hand.map(c=>cardHtml(c)).join("")}
+          </div>
+
+          ${hand.length
+            ?`<div class="hand-meta">
+                ${value.total}${value.soft?" soft":""}
+              </div>`
+            :""
+          }
+
+          ${result
+            ?`<div class="seat-result">${esc(result)}</div>`
+            :""
+          }
+
+          <div class="seat-ledger">
+            ${ledgerLabel(p.user_id)}
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  const myHand=game.hands?.[user.id]||[];
+
+  const myTurn=
+    game.phase==="playing" &&
+    game.turn_user_id===user.id;
+
+  if($("#playerActions")){
+    $("#playerActions").classList.toggle(
+      "hidden",
+      !myTurn
+    );
+  }
+
+  if($("#dealerActionBtn")){
+    $("#dealerActionBtn").classList.toggle(
+      "hidden",
+      !(
+        game.phase==="dealer" &&
+        currentLobby.host_id===user.id
+      )
+    );
+  }
+
+  if($("#startRoundBtn")){
+    $("#startRoundBtn").classList.toggle(
+      "hidden",
+      !(
+        game.phase==="waiting" &&
+        currentLobby.host_id===user.id
+      )
+    );
+
+    $("#startRoundBtn").textContent=
+      game.phase==="waiting"
+        ?"Deal round"
+        :"";
+  }
+
+  if($("#doubleBtn")){
+    $("#doubleBtn").disabled=
+      !(
+        myHand.length===2 &&
+        (profile?.balance||0)>=myBet
+      );
+  }
+
+  renderDealerBank();
+}
+
+
+/* =========================
+   DEALER BANK
+========================= */
 
 function ledgerValue(id){
   return Number(game?.ledger?.[id]||0);
@@ -515,15 +675,21 @@ function ledgerValue(id){
 function ledgerLabel(id){
   const n=ledgerValue(id);
 
-  if(n>0)
-    return `<span class="up">
-      Dealer owes ${n.toLocaleString()}
-    </span>`;
+  if(n>0){
+    return `
+      <span class="up">
+        Dealer owes ${n.toLocaleString()}
+      </span>
+    `;
+  }
 
-  if(n<0)
-    return `<span class="down">
-      Owes dealer ${Math.abs(n).toLocaleString()}
-    </span>`;
+  if(n<0){
+    return `
+      <span class="down">
+        Owes dealer ${Math.abs(n).toLocaleString()}
+      </span>
+    `;
+  }
 
   return `<span>Settled</span>`;
 }
@@ -544,6 +710,9 @@ function renderDealerBank(){
   if(!isDealer) return;
 
   const sel=$("#dealerPlayerSelect");
+
+  if(!sel) return;
+
   const current=sel.value;
 
   sel.innerHTML=
@@ -557,24 +726,25 @@ function renderDealerBank(){
       .join("");
 
   if(
-    [...sel.options]
-      .some(o=>o.value===current)
+    [...sel.options].some(o=>o.value===current)
   ){
     sel.value=current;
   }
 
-  $("#dealerLedger").innerHTML=
+  const ledger=$("#dealerLedger");
+
+  if(!ledger) return;
+
+  ledger.innerHTML=
     lobbyPlayers
       .filter(p=>p.user_id!==user.id)
       .map(p=>{
         const n=ledgerValue(p.user_id);
 
         const cls=
-          n>0
-            ?"up"
-            :n<0
-              ?"down"
-              :"even";
+          n>0?"up":
+          n<0?"down":
+          "even";
 
         const txt=
           n>0
@@ -607,9 +777,9 @@ async function dealerAdjust(direction){
     return;
   }
 
-  const target=$("#dealerPlayerSelect").value;
+  const target=$("#dealerPlayerSelect")?.value;
   const amount=Math.floor(
-    Number($("#dealerAmount").value)
+    Number($("#dealerAmount")?.value)
   );
 
   if(!target){
@@ -634,8 +804,14 @@ async function dealerAdjust(direction){
 
   await saveGame(g);
 
-  $("#dealerAmount").value="";
+  if($("#dealerAmount"))
+    $("#dealerAmount").value="";
 }
+
+
+/* =========================
+   GAME
+========================= */
 
 function currentGame(){
   return JSON.parse(
@@ -659,10 +835,11 @@ async function saveGame(next){
     })
     .eq("id",currentLobby.id);
 
-  if(error)
+  if(error){
     toast(error.message);
-  else
+  }else{
     renderTable();
+  }
 }
 
 async function setBet(amount){
@@ -682,10 +859,7 @@ async function setBet(amount){
     return;
   }
 
-  if(
-    game?.phase &&
-    game.phase!=="waiting"
-  ){
+  if(game?.phase!=="waiting"){
     toast("Bets can only be changed before a deal.");
     return;
   }
@@ -772,8 +946,9 @@ async function playerAction(type){
   if(
     game?.phase!=="playing" ||
     game.turn_user_id!==user.id
-  )
+  ){
     return;
+  }
 
   const g=currentGame();
   const hand=g.hands[user.id];
@@ -788,8 +963,7 @@ async function playerAction(type){
     if(
       handValue(g.hands[user.id]).total>=21
     ){
-      g.turn_user_id=
-        nextTurn(g,user.id);
+      g.turn_user_id=nextTurn(g,user.id);
     }
 
   }else if(type==="double"){
@@ -816,14 +990,12 @@ async function playerAction(type){
       g.shoe.pop()
     ];
 
-    g.turn_user_id=
-      nextTurn(g,user.id);
+    g.turn_user_id=nextTurn(g,user.id);
 
     await getProfile();
 
   }else if(type==="stand"){
-    g.turn_user_id=
-      nextTurn(g,user.id);
+    g.turn_user_id=nextTurn(g,user.id);
   }
 
   if(!g.turn_user_id)
@@ -855,17 +1027,14 @@ async function runDealer(){
   if(
     currentLobby.host_id!==user.id ||
     game?.phase!=="dealer"
-  )
+  ){
     return;
+  }
 
   const g=currentGame();
 
-  while(
-    handValue(g.dealer).total<17
-  ){
-    g.dealer.push(
-      g.shoe.pop()
-    );
+  while(handValue(g.dealer).total<17){
+    g.dealer.push(g.shoe.pop());
   }
 
   const dv=handValue(g.dealer).total;
@@ -885,7 +1054,6 @@ async function runDealer(){
 
     if(pv>21){
       text="Bust — lose";
-      payout=0;
 
     }else if(
       isBlackjack(h) &&
@@ -914,7 +1082,6 @@ async function runDealer(){
 
     }else{
       text="Dealer wins";
-      payout=0;
     }
 
     results[id]=text;
@@ -932,8 +1099,7 @@ async function runDealer(){
 
   g.results=results;
   g.phase="finished";
-  g.message=
-    `Dealer: ${dv}. Start a new round when ready.`;
+  g.message=`Dealer: ${dv}. Start a new round when ready.`;
   g.turn_user_id=null;
 
   await saveGame(g);
@@ -982,148 +1148,22 @@ async function leaveLobby(){
   await loadLobbies();
 }
 
-async function authSubmit(e){
-  e.preventDefault();
 
-  const email=$("#email").value.trim();
-  const password=$("#password").value;
-
-  if(!email || !password){
-    toast("Enter your email and password.");
-    return;
-  }
-
-  if(authMode==="login"){
-
-    const {error}=
-      await supabase.auth.signInWithPassword({
-        email,
-        password
-      });
-
-    if(error)
-      toast(error.message);
-
-  }else{
-
-    const display=
-      $("#displayName")?.value.trim()||"Player";
-
-    const {error}=
-      await supabase.auth.signUp({
-        email,
-        password,
-        options:{
-          data:{
-            display_name:display
-          }
-        }
-      });
-
-    if(error)
-      toast(error.message);
-    else
-      toast(
-        "Account created. Check your email if confirmation is enabled."
-      );
-  }
-}
-
-async function boot(){
-  const {data}=await supabase.auth.getSession();
-
-  if(data.session){
-    user=data.session.user;
-
-    if(await getProfile())
-      enterApp();
-  }
-
-  supabase.auth.onAuthStateChange(
-    async(_,session)=>{
-      user=session?.user||null;
-
-      if(user){
-
-        if(await getProfile())
-          enterApp();
-
-      }else{
-
-        $("#authView")?.classList.remove("hidden");
-        $("#appView")?.classList.add("hidden");
-
-      }
-    }
-  );
-}
-
-function enterApp(){
-  $("#authView")?.classList.add("hidden");
-  $("#appView")?.classList.remove("hidden");
-
-  renderBalance();
-  loadLobbies();
-}
-
-
-/* AUTH TABS */
-
-$$("[data-auth-tab]").forEach(b=>{
-
-  b.addEventListener("click",(event)=>{
-
-    event.preventDefault();
-
-    authMode=b.dataset.authTab;
-
-    $$("[data-auth-tab]").forEach(x=>{
-      x.classList.toggle(
-        "active",
-        x===b
-      );
-    });
-
-    const nameWrap=$("#nameWrap");
-    const submit=$("#authSubmit");
-
-    if(nameWrap){
-      nameWrap.classList.toggle(
-        "hidden",
-        authMode!=="signup"
-      );
-    }
-
-    if(submit){
-      submit.textContent=
-        authMode==="login"
-          ?"Log in"
-          :"Create account";
-    }
-  });
-
-});
-
-
-/* AUTH FORM */
+/* =========================
+   BUTTONS
+========================= */
 
 const authForm=$("#authForm");
 
 if(authForm){
-  authForm.addEventListener(
-    "submit",
-    authSubmit
-  );
+  authForm.addEventListener("submit",authSubmit);
 }
-
-
-/* CREATE LOBBY */
 
 const createLobbyBtn=$("#createLobbyBtn");
 
 if(createLobbyBtn){
   createLobbyBtn.onclick=()=>{
-    $("#createModal").classList.remove("hidden");
+    $("#createModal")?.classList.remove("hidden");
   };
 }
 
@@ -1133,9 +1173,6 @@ if(confirmCreateLobby){
   confirmCreateLobby.onclick=createLobby;
 }
 
-
-/* HOME */
-
 const backHomeBtn=$("#backHomeBtn");
 
 if(backHomeBtn){
@@ -1144,24 +1181,20 @@ if(backHomeBtn){
       supabase.removeChannel(lobbyChannel);
 
     currentLobby=null;
+    game=null;
+
     show("home");
     loadLobbies();
   };
 }
 
-
-/* PROFILE */
-
 const profileBtn=$("#profileBtn");
 
 if(profileBtn){
   profileBtn.onclick=()=>{
-    $("#profileModal").classList.remove("hidden");
+    $("#profileModal")?.classList.remove("hidden");
   };
 }
-
-
-/* CLOSE BUTTONS */
 
 $$("[data-close]").forEach(b=>{
   b.onclick=()=>{
@@ -1172,40 +1205,35 @@ $$("[data-close]").forEach(b=>{
   };
 });
 
-
-/* LOGOUT */
-
 const logoutBtn=$("#logoutBtn");
 
 if(logoutBtn){
-  logoutBtn.onclick=()=>{
-    supabase.auth.signOut();
+  logoutBtn.onclick=async()=>{
+    await supabase.auth.signOut();
+    window.location.href="index.html";
   };
 }
-
-
-/* COPY INVITE */
 
 const copyCodeBtn=$("#copyCodeBtn");
 
 if(copyCodeBtn){
   copyCodeBtn.onclick=async()=>{
-    await navigator.clipboard.writeText(
-      currentLobby.invite_code
-    );
+    if(!currentLobby) return;
 
-    toast("Invite code copied.");
+    try{
+      await navigator.clipboard.writeText(
+        currentLobby.invite_code
+      );
+      toast("Invite code copied.");
+    }catch{
+      toast("Invite code: "+currentLobby.invite_code);
+    }
   };
 }
 
-
-/* BET BUTTONS */
-
 $$(".chip-btn").forEach(b=>{
   b.onclick=()=>{
-    setBet(
-      Number(b.dataset.bet)
-    );
+    setBet(Number(b.dataset.bet));
   };
 });
 
@@ -1213,23 +1241,19 @@ const setBetBtn=$("#setBetBtn");
 
 if(setBetBtn){
   setBetBtn.onclick=()=>{
-    setBet(
-      Number($("#customBet").value)
-    );
+    setBet(Number($("#customBet")?.value));
   };
 }
-
-
-/* GAME BUTTONS */
 
 const startRoundBtn=$("#startRoundBtn");
 
 if(startRoundBtn){
   startRoundBtn.onclick=async()=>{
-    if(game?.phase==="finished")
+    if(game?.phase==="finished"){
       await resetRound();
-    else
+    }else{
       await startRound();
+    }
   };
 }
 
@@ -1253,9 +1277,6 @@ const dealerActionBtn=$("#dealerActionBtn");
 if(dealerActionBtn)
   dealerActionBtn.onclick=runDealer;
 
-
-/* DEALER BANK */
-
 const dealerGiveBtn=$("#dealerGiveBtn");
 const dealerTakeBtn=$("#dealerTakeBtn");
 
@@ -1265,43 +1286,36 @@ if(dealerGiveBtn)
 if(dealerTakeBtn)
   dealerTakeBtn.onclick=()=>dealerAdjust("take");
 
-
-/* LEAVE */
-
 const leaveLobbyBtn=$("#leaveLobbyBtn");
 
 if(leaveLobbyBtn)
   leaveLobbyBtn.onclick=leaveLobby;
 
-
-/* CHAT */
-
 const chatForm=$("#chatForm");
 
 if(chatForm){
-
   chatForm.onsubmit=async e=>{
-
     e.preventDefault();
 
     const input=$("#chatInput");
-    const message=input.value.trim();
+    const message=input?.value.trim();
 
     if(!message || !currentLobby)
       return;
 
-    const {error}=
-      await supabase
-        .from("chat_messages")
-        .insert({
-          lobby_id:currentLobby.id,
-          user_id:user.id,
-          display_name:profile.display_name,
-          message
-        });
+    const {error}=await supabase
+      .from("chat_messages")
+      .insert({
+        lobby_id:currentLobby.id,
+        user_id:user.id,
+        display_name:profile.display_name,
+        message
+      });
 
-    if(error)
+    if(error){
       toast(error.message);
+      return;
+    }
 
     input.value="";
   };
@@ -1309,5 +1323,4 @@ if(chatForm){
 
 
 /* START */
-
 boot();
