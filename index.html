@@ -24,17 +24,7 @@
       </div>
 
       <div class="auth-card">
-        <div class="auth-tabs">
-          <button class="tab active" data-auth-tab="login">Log in</button>
-          <button class="tab" data-auth-tab="signup">Create account</button>
-        </div>
-
         <form id="authForm">
-          <label id="nameWrap" class="field hidden">
-            <span>Display name</span>
-            <input id="displayName" autocomplete="name" maxlength="24" placeholder="Your table name">
-          </label>
-
           <label class="field">
             <span>Email</span>
             <input id="email" type="email" autocomplete="email" required placeholder="you@example.com">
@@ -47,6 +37,12 @@
 
           <button class="primary wide" type="submit" id="authSubmit">Log in</button>
         </form>
+
+        <div class="auth-switch">
+          <span>Don't have an account?</span>
+          <a href="signup.html">Create one</a>
+        </div>
+
         <p class="muted small">Private access only. Ask the table owner to approve your email.</p>
       </div>
     </section>
